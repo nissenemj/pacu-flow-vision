@@ -1,4 +1,5 @@
-import React, { useState, useCallback } from 'react';
+
+import React, { useState, useCallback, useEffect } from 'react';
 import { 
   defaultSimulationParams, 
   runSimulation, 
@@ -6,7 +7,8 @@ import {
   SimulationParams,
   SurgeryCase,
   ORBlock,
-  PatientClass
+  PatientClass,
+  scheduleCasesInBlocks
 } from '@/lib/simulation';
 import { toast } from '@/components/ui/use-toast';
 import SimulationParameters from './SimulationParameters';
@@ -14,11 +16,13 @@ import ResultsCharts from './ResultsCharts';
 import ORScheduleChart from './ORScheduleChart';
 import GanttChart from './GanttChart';
 import BlockScheduler from './BlockScheduler';
+import SurgeryScheduler from './SurgeryScheduler';
 import ScenarioManager from './ScenarioManager';
 import ReportExport from './ReportExport';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 // Block interface that extends ORBlock for UI components
 interface Block extends ORBlock {
@@ -51,6 +55,12 @@ const SimulationDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState("simulator");
   const [resultTab, setResultTab] = useState("metrics");
   const [activeConfigTab, setActiveConfigTab] = useState("parameters");
+  
+  // New states for integrating BlockScheduler and SurgeryScheduler
+  const [blocks, setBlocks] = useState<Block[]>([]);
+  const [surgeryList, setSurgeryList] = useState<SurgeryCase[]>([]);
+  const [scheduleType, setScheduleType] = useState<'template' | 'custom'>('template');
+  const [blockScheduleEnabled, setBlockScheduleEnabled] = useState(true);
 
   const handleParamChange = useCallback((key: string, value: any) => {
     setParams((prev) => {
@@ -110,10 +120,14 @@ const SimulationDashboard: React.FC = () => {
   }, []);
 
   // Handle block schedule changes
-  const handleBlockScheduleChange = useCallback((blocks: Block[]) => {
+  const handleBlockScheduleChange = useCallback((updatedBlocks: Block[]) => {
+    setBlocks(updatedBlocks);
+    setBlockScheduleEnabled(true);
+    
+    // Update params with new blocks
     setParams(prev => {
       // Convert Block[] to ORBlock[] for the simulation
-      const orBlocks: ORBlock[] = blocks.map(convertBlockToORBlock);
+      const orBlocks: ORBlock[] = updatedBlocks.map(convertBlockToORBlock);
       
       return {
         ...prev,
@@ -121,15 +135,130 @@ const SimulationDashboard: React.FC = () => {
         orBlocks: orBlocks
       };
     });
-  }, []);
+    
+    // If we're using the block-based scheduling, update the surgery list based on blocks
+    if (scheduleType === 'template') {
+      generateSurgeryListFromBlocks(updatedBlocks);
+    }
+  }, [scheduleType]);
+  
+  // Generate surgery list from blocks
+  const generateSurgeryListFromBlocks = useCallback((blocksToUse: Block[]) => {
+    const orBlocks = blocksToUse.map(convertBlockToORBlock);
+    
+    if (orBlocks.length === 0) {
+      toast({
+        title: "Ei blokkeja",
+        description: "Lisää blokkeja saadaksesi automaattisen leikkauslistan.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Generate cases based on blocks
+    const generatedSurgeryList = scheduleCasesInBlocks(
+      orBlocks,
+      params.patientClasses,
+      params.patientClassDistribution,
+      params.simulationDays
+    );
+    
+    setSurgeryList(generatedSurgeryList);
+    
+    // Update simulation params with new surgery list
+    setParams(prev => ({
+      ...prev,
+      surgeryScheduleType: 'custom',
+      customSurgeryList: generatedSurgeryList,
+    }));
+    
+    toast({
+      title: "Leikkauslista generoitu",
+      description: `${generatedSurgeryList.length} leikkausta generoitu blokkien perusteella.`
+    });
+  }, [params.patientClasses, params.patientClassDistribution, params.simulationDays]);
+  
+  // Handle surgery list changes from SurgeryScheduler
+  const handleSurgeryListChange = useCallback((newSurgeryList: SurgeryCase[], type: 'template' | 'custom') => {
+    setSurgeryList(newSurgeryList);
+    setScheduleType(type);
+    
+    setParams(prev => ({
+      ...prev,
+      surgeryScheduleType: type,
+      customSurgeryList: type === 'custom' ? newSurgeryList : undefined,
+    }));
+    
+    // Validate surgeries against blocks if we have blocks
+    if (blocks.length > 0 && type === 'custom' && blockScheduleEnabled) {
+      validateSurgeriesAgainstBlocks(newSurgeryList, blocks);
+    }
+  }, [blocks, blockScheduleEnabled]);
+  
+  // Validate surgeries against blocks
+  const validateSurgeriesAgainstBlocks = (surgeries: SurgeryCase[], blocksToValidate: Block[]) => {
+    let invalidSurgeries = 0;
+    const orBlocks = blocksToValidate.map(convertBlockToORBlock);
+    
+    surgeries.forEach(surgery => {
+      // Find the class for this surgery
+      const patientClass = params.patientClasses.find(pc => pc.id === surgery.classId);
+      if (!patientClass) return;
+      
+      // Calculate surgery day and time
+      const surgeryDay = Math.floor(surgery.scheduledStartTime / 1440); // 1440 minutes in a day
+      const surgeryStartTime = surgery.scheduledStartTime % 1440; // Time within the day
+      const surgeryEndTime = surgeryStartTime + surgery.duration;
+      
+      // Find matching block for this surgery
+      const matchingBlock = orBlocks.find(block => {
+        return block.orId === surgery.orRoom && 
+               block.day === surgeryDay &&
+               surgeryStartTime >= block.start && 
+               surgeryEndTime <= block.end &&
+               block.allowedClasses.includes(surgery.classId);
+      });
+      
+      if (!matchingBlock) {
+        invalidSurgeries++;
+      }
+    });
+    
+    if (invalidSurgeries > 0) {
+      toast({
+        title: "Yhteensopivuusvaroitus",
+        description: `${invalidSurgeries} leikkausta ei vastaa määritettyjä blokkeja.`,
+        variant: "warning"
+      });
+    }
+  };
+
+  // Handle schedule type change
+  const handleScheduleTypeChange = useCallback((type: 'template' | 'custom') => {
+    setScheduleType(type);
+    
+    if (type === 'template' && blockScheduleEnabled && blocks.length > 0) {
+      // When switching to template and blocks are enabled, generate surgeries from blocks
+      generateSurgeryListFromBlocks(blocks);
+    }
+  }, [blockScheduleEnabled, blocks, generateSurgeryListFromBlocks]);
 
   const runSimulationHandler = useCallback(() => {
     setIsRunning(true);
     // Use setTimeout to allow UI to update before running simulation
     setTimeout(() => {
       try {
+        // Ensure we're using the right parameters
+        const simulationParams = {
+          ...params,
+          blockScheduleEnabled: blockScheduleEnabled,
+          orBlocks: blocks.map(convertBlockToORBlock),
+          surgeryScheduleType: scheduleType,
+          customSurgeryList: scheduleType === 'custom' ? surgeryList : undefined,
+        };
+        
         // Run simulation with current parameters
-        const simulationResults = runSimulation(params);
+        const simulationResults = runSimulation(simulationParams);
         setResults(simulationResults);
         toast({
           title: "Simulaatio valmis",
@@ -147,7 +276,7 @@ const SimulationDashboard: React.FC = () => {
         setIsRunning(false);
       }
     }, 100);
-  }, [params]);
+  }, [params, blockScheduleEnabled, blocks, scheduleType, surgeryList]);
 
   // Load a scenario from ScenarioManager
   const handleLoadScenario = useCallback((scenario: { params: SimulationParams, results: SimulationResults | null }) => {
@@ -155,11 +284,36 @@ const SimulationDashboard: React.FC = () => {
     setResults(scenario.results);
     setActiveTab("simulator");
     
+    // Update blocks and surgery list from the scenario
+    if (scenario.params.orBlocks) {
+      const loadedBlocks: Block[] = scenario.params.orBlocks.map(block => ({
+        ...block,
+        label: block.label || `Blokki ${block.id}`,
+        allowedProcedures: block.allowedClasses || []
+      }));
+      setBlocks(loadedBlocks);
+      setBlockScheduleEnabled(scenario.params.blockScheduleEnabled || false);
+    }
+    
+    if (scenario.params.customSurgeryList) {
+      setSurgeryList(scenario.params.customSurgeryList);
+      setScheduleType('custom');
+    } else {
+      setScheduleType('template');
+    }
+    
     toast({
       title: "Skenaario ladattu",
       description: "Skenaario on ladattu simulaattoriin."
     });
   }, []);
+  
+  // Generate surgery list from blocks when block tab is selected
+  useEffect(() => {
+    if (activeConfigTab === 'or-blocks' && blockScheduleEnabled && blocks.length > 0 && scheduleType === 'template') {
+      generateSurgeryListFromBlocks(blocks);
+    }
+  }, [activeConfigTab, blockScheduleEnabled, blocks, scheduleType, generateSurgeryListFromBlocks]);
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
@@ -179,6 +333,7 @@ const SimulationDashboard: React.FC = () => {
             <TabsList>
               <TabsTrigger value="parameters">Parametrit</TabsTrigger>
               <TabsTrigger value="or-blocks">Salisuunnittelu</TabsTrigger>
+              <TabsTrigger value="surgery-list">Leikkauslista</TabsTrigger>
             </TabsList>
             
             <TabsContent value="parameters" className="pt-4">
@@ -197,14 +352,77 @@ const SimulationDashboard: React.FC = () => {
                 onScheduleChange={handleBlockScheduleChange}
               />
               
+              <div className="mt-4">
+                {blocks.length > 0 && (
+                  <Card className="mb-4">
+                    <CardContent className="pt-4">
+                      <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center">
+                          <Badge variant={blockScheduleEnabled ? "default" : "outline"} className="mr-2">
+                            {blockScheduleEnabled ? 'Käytössä' : 'Ei käytössä'}
+                          </Badge>
+                          <h3 className="text-lg font-medium">Leikkaussaliblokit</h3>
+                        </div>
+                        <div className="flex space-x-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => setBlockScheduleEnabled(!blockScheduleEnabled)}
+                          >
+                            {blockScheduleEnabled ? 'Poista käytöstä' : 'Ota käyttöön'}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              if (blocks.length > 0) generateSurgeryListFromBlocks(blocks);
+                              setActiveConfigTab('surgery-list');
+                            }}
+                          >
+                            Generoi leikkauslista
+                          </Button>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {blockScheduleEnabled 
+                          ? 'Leikkaussaliblokit ohjaavat simulaatiota. Leikkaukset aikataulutetaan blokkien mukaisesti.' 
+                          : 'Leikkaussaliblokit eivät vaikuta simulaatioon.'}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              
+                <div className="flex justify-end">
+                  <Button
+                    onClick={runSimulationHandler}
+                    disabled={isRunning}
+                    className="bg-medical-blue text-white px-4 py-2 rounded hover:bg-opacity-90 disabled:opacity-50"
+                  >
+                    {isRunning ? 'Simulaatio käynnissä...' : 'Aja simulaatio'}
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+            
+            <TabsContent value="surgery-list" className="pt-4">
+              <SurgeryScheduler
+                patientClasses={params.patientClasses}
+                patientDistribution={params.patientClassDistribution}
+                simulationDays={params.simulationDays}
+                onScheduleGenerated={(newSurgeryList) => handleSurgeryListChange(newSurgeryList, 'custom')}
+                onScheduleTypeChange={handleScheduleTypeChange}
+                blocks={blocks}
+                blockScheduleEnabled={blockScheduleEnabled}
+              />
+              
               <div className="mt-4 flex justify-end">
-                <button
+                <Button
                   onClick={runSimulationHandler}
                   disabled={isRunning}
                   className="bg-medical-blue text-white px-4 py-2 rounded hover:bg-opacity-90 disabled:opacity-50"
                 >
                   {isRunning ? 'Simulaatio käynnissä...' : 'Aja simulaatio'}
-                </button>
+                </Button>
               </div>
             </TabsContent>
           </Tabs>

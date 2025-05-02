@@ -1,14 +1,15 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Calendar, Clock, ListPlus, Upload } from 'lucide-react';
+import { Calendar, Clock, ListPlus, Upload, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from '@/components/ui/use-toast';
-import { PatientClass, SurgeryCase, defaultOrRooms, generateCustomSurgeryList } from '@/lib/simulation';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { PatientClass, SurgeryCase, ORBlock, defaultOrRooms, generateCustomSurgeryList } from '@/lib/simulation';
 
 interface SurgerySchedulerProps {
   patientClasses: PatientClass[];
@@ -16,6 +17,8 @@ interface SurgerySchedulerProps {
   simulationDays: number;
   onScheduleGenerated: (surgeryList: SurgeryCase[]) => void;
   onScheduleTypeChange: (type: 'template' | 'custom') => void;
+  blocks?: { id: string; orId: string; start: number; end: number; day: number; label: string; allowedProcedures: string[] }[];
+  blockScheduleEnabled?: boolean;
 }
 
 const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
@@ -23,22 +26,40 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
   patientDistribution,
   simulationDays,
   onScheduleGenerated,
-  onScheduleTypeChange
+  onScheduleTypeChange,
+  blocks = [],
+  blockScheduleEnabled = false
 }) => {
   const [scheduleMode, setScheduleMode] = useState<'template' | 'generate' | 'upload'>('template');
   const [orRooms, setOrRooms] = useState<string[]>(defaultOrRooms);
   const [averageDailySurgeries, setAverageDailySurgeries] = useState(25);
   const [csvContent, setCsvContent] = useState<string>('');
+  const [surgeryList, setSurgeryList] = useState<SurgeryCase[]>([]);
+  const [validationErrors, setValidationErrors] = useState<{invalidCount: number, totalCount: number}>({invalidCount: 0, totalCount: 0});
+  
+  // Set available OR rooms based on blocks if blocks are enabled
+  useEffect(() => {
+    if (blockScheduleEnabled && blocks.length > 0) {
+      // Extract unique OR room IDs from blocks
+      const uniqueORs = Array.from(new Set(blocks.map(block => block.orId)));
+      if (uniqueORs.length > 0) {
+        setOrRooms(uniqueORs);
+      }
+    }
+  }, [blockScheduleEnabled, blocks]);
   
   // Handle mode change
   const handleModeChange = (mode: 'template' | 'generate' | 'upload') => {
     setScheduleMode(mode);
     onScheduleTypeChange(mode === 'template' ? 'template' : 'custom');
+    
+    // Clear validation errors when changing mode
+    setValidationErrors({invalidCount: 0, totalCount: 0});
   };
   
   // Generate surgery list
   const handleGenerateSchedule = () => {
-    const surgeryList = generateCustomSurgeryList(
+    const generatedList = generateCustomSurgeryList(
       simulationDays,
       orRooms,
       patientClasses,
@@ -46,12 +67,18 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
       averageDailySurgeries
     );
     
-    onScheduleGenerated(surgeryList);
+    setSurgeryList(generatedList);
+    onScheduleGenerated(generatedList);
     
     toast({
       title: "Leikkauslista generoitu",
-      description: `${surgeryList.length} leikkausta ${simulationDays} päivälle.`
+      description: `${generatedList.length} leikkausta ${simulationDays} päivälle.`
     });
+    
+    // If blocks are enabled, validate the generated list against blocks
+    if (blockScheduleEnabled && blocks.length > 0) {
+      validateAgainstBlocks(generatedList);
+    }
   };
   
   // Handle file upload
@@ -108,6 +135,7 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
       
       // Sort by start time and send to parent
       const sortedList = surgeryList.sort((a, b) => a.scheduledStartTime - b.scheduledStartTime);
+      setSurgeryList(sortedList);
       onScheduleGenerated(sortedList);
       
       toast({
@@ -115,12 +143,60 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
         description: `${surgeryList.length} leikkausta tuotu onnistuneesti.`
       });
       
+      // If blocks are enabled, validate against blocks
+      if (blockScheduleEnabled && blocks.length > 0) {
+        validateAgainstBlocks(sortedList);
+      }
+      
     } catch (error) {
       console.error("CSV parsing error:", error);
       toast({
         title: "Virhe tiedoston käsittelyssä",
         description: error instanceof Error ? error.message : "Tiedosto on virheellinen.",
         variant: "destructive"
+      });
+    }
+  };
+  
+  // Validate surgeries against blocks
+  const validateAgainstBlocks = (surgeries: SurgeryCase[]) => {
+    if (!blockScheduleEnabled || blocks.length === 0) {
+      setValidationErrors({invalidCount: 0, totalCount: 0});
+      return;
+    }
+    
+    let invalidCount = 0;
+    
+    surgeries.forEach(surgery => {
+      // Calculate surgery day and time
+      const surgeryDay = Math.floor(surgery.scheduledStartTime / 1440); // 1440 minutes in a day
+      const surgeryStartTime = surgery.scheduledStartTime % 1440; // Time within the day
+      const surgeryEndTime = surgeryStartTime + surgery.duration;
+      
+      // Find matching block for this surgery
+      const matchingBlock = blocks.find(block => {
+        return block.orId === surgery.orRoom && 
+               block.day === surgeryDay &&
+               surgeryStartTime >= block.start && 
+               surgeryEndTime <= block.end &&
+               block.allowedProcedures.includes(surgery.classId);
+      });
+      
+      if (!matchingBlock) {
+        invalidCount++;
+      }
+    });
+    
+    setValidationErrors({
+      invalidCount,
+      totalCount: surgeries.length
+    });
+    
+    if (invalidCount > 0) {
+      toast({
+        title: "Yhteensopivuusvaroitus",
+        description: `${invalidCount} leikkausta ${surgeries.length} leikkauksesta ei vastaa määritettyjä blokkeja.`,
+        variant: "warning"
       });
     }
   };
@@ -161,11 +237,47 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
     
     URL.revokeObjectURL(url);
   };
+  
+  // Format minutes to HH:MM display
+  const formatTime = (minutes: number): string => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  };
+  
+  // Get block info for a specific OR
+  const getBlockInfo = (orId: string) => {
+    if (!blockScheduleEnabled || blocks.length === 0) return null;
+    
+    const orBlocks = blocks.filter(block => block.orId === orId);
+    if (orBlocks.length === 0) return null;
+    
+    // Get unique patient classes allowed in this OR
+    const allowedClasses = Array.from(
+      new Set(orBlocks.flatMap(block => block.allowedProcedures))
+    );
+    
+    // Get operating hours (min start to max end time)
+    const minStart = Math.min(...orBlocks.map(block => block.start));
+    const maxEnd = Math.max(...orBlocks.map(block => block.end));
+    
+    return {
+      blocks: orBlocks.length,
+      allowedClasses,
+      operatingHours: `${formatTime(minStart)} - ${formatTime(maxEnd)}`,
+      totalHours: orBlocks.reduce((sum, block) => sum + (block.end - block.start) / 60, 0)
+    };
+  };
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-lg">Leikkauslistan hallinta</CardTitle>
+        {blockScheduleEnabled && blocks.length > 0 && (
+          <div className="text-sm text-muted-foreground">
+            Leikkauslista perustuu {blocks.length} määritettyyn saliblokkiin.
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         <Tabs 
@@ -193,6 +305,18 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
             <div className="text-sm text-muted-foreground">
               <p>Käytetään automaattista leikkauslistaa, joka perustuu päivittäisiin leikkausmääriin ja tuntijakaumaan.</p>
             </div>
+            
+            {blockScheduleEnabled && blocks.length > 0 && (
+              <Alert>
+                <AlertTitle className="flex items-center">
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Saliblokit käytössä
+                </AlertTitle>
+                <AlertDescription>
+                  Automaattinen leikkauslista generoidaan salisuunnittelun blokkien perusteella.
+                </AlertDescription>
+              </Alert>
+            )}
           </TabsContent>
           
           <TabsContent value="generate" className="space-y-4">
@@ -229,18 +353,38 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
                         updatedRooms[index] = e.target.value;
                         setOrRooms(updatedRooms);
                       }}
+                      disabled={blockScheduleEnabled && blocks.length > 0}
                     />
                     <Button 
                       variant="ghost" 
                       size="icon" 
                       className="h-8 w-8" 
                       onClick={() => handleRemoveOrRoom(index)}
+                      disabled={blockScheduleEnabled && blocks.length > 0}
                     >
                       ×
                     </Button>
+                    
+                    {blockScheduleEnabled && blocks.length > 0 && getBlockInfo(room) && (
+                      <div className="absolute mt-10 text-xs text-muted-foreground">
+                        {getBlockInfo(room)?.operatingHours}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
+              
+              {blockScheduleEnabled && blocks.length > 0 && (
+                <div className="mt-4 text-sm">
+                  <Alert variant="warning">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Huomio</AlertTitle>
+                    <AlertDescription>
+                      Leikkauslista generoidaan saliblokkien perusteella. Salit on määritetty blokkien mukaan.
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
             </div>
             
             <Button onClick={handleGenerateSchedule} className="w-full">
@@ -267,8 +411,33 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
                 </Button>
               </div>
             </div>
+            
+            {blockScheduleEnabled && blocks.length > 0 && (
+              <Alert>
+                <AlertTitle className="flex items-center">
+                  <AlertTriangle className="h-4 w-4 mr-2" />
+                  Saliblokit käytössä
+                </AlertTitle>
+                <AlertDescription>
+                  Ladatut leikkaukset tarkistetaan saliblokkien yhteensopivuuden suhteen.
+                </AlertDescription>
+              </Alert>
+            )}
           </TabsContent>
         </Tabs>
+        
+        {validationErrors.invalidCount > 0 && (
+          <div className="mt-4">
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Yhteensopivuusvirheitä</AlertTitle>
+              <AlertDescription>
+                {validationErrors.invalidCount} leikkausta {validationErrors.totalCount} leikkauksesta ei vastaa määritettyjä blokkeja. 
+                Tarkista leikkausten ajat ja potilasluokat.
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
