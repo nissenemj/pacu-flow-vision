@@ -1,12 +1,20 @@
-// Update this page (the content is just a fallback if you fail to update the page)
 
-const Index = () => {
+import React from 'react';
+import Header from '@/components/Header';
+import SimulationDashboard from '@/components/SimulationDashboard';
+
+const Index: React.FC = () => {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Welcome to Your Blank App</h1>
-        <p className="text-xl text-gray-600">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-gray-50">
+      <Header />
+      <main className="pb-16">
+        <SimulationDashboard />
+      </main>
+      <footer className="border-t py-4">
+        <div className="container mx-auto px-4 text-center text-sm text-gray-500">
+          PACU Flow Vision &copy; 2025 - Heräämösimulointityökalu
+        </div>
+      </footer>
     </div>
   );
 };
