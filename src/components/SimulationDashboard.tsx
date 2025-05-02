@@ -12,7 +12,10 @@ import { toast } from '@/components/ui/use-toast';
 import SimulationParameters from './SimulationParameters';
 import ResultsCharts from './ResultsCharts';
 import ORScheduleChart from './ORScheduleChart';
+import GanttChart from './GanttChart';
 import BlockScheduler from './BlockScheduler';
+import ScenarioManager from './ScenarioManager';
+import ReportExport from './ReportExport';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +48,6 @@ const SimulationDashboard: React.FC = () => {
   
   const [results, setResults] = useState<SimulationResults | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [savedScenarios, setSavedScenarios] = useState<{name: string, params: SimulationParams, results: SimulationResults | null}[]>([]);
   const [activeTab, setActiveTab] = useState("simulator");
   const [resultTab, setResultTab] = useState("metrics");
   const [activeConfigTab, setActiveConfigTab] = useState("parameters");
@@ -147,40 +149,17 @@ const SimulationDashboard: React.FC = () => {
     }, 100);
   }, [params]);
 
-  const saveScenario = useCallback(() => {
-    if (!results) return;
-    
-    const scenarioName = prompt("Anna skenaariolle nimi:", `Skenaario ${savedScenarios.length + 1}`);
-    if (!scenarioName) return;
-    
-    setSavedScenarios(prev => [
-      ...prev, 
-      {
-        name: scenarioName,
-        params: {...params},
-        results: results
-      }
-    ]);
-    
-    toast({
-      title: "Skenaario tallennettu",
-      description: `Skenaario "${scenarioName}" on tallennettu.`
-    });
-    
-    setActiveTab("scenarios");
-  }, [params, results, savedScenarios.length]);
-
-  const loadScenario = useCallback((index: number) => {
-    const scenario = savedScenarios[index];
+  // Load a scenario from ScenarioManager
+  const handleLoadScenario = useCallback((scenario: { params: SimulationParams, results: SimulationResults | null }) => {
     setParams(scenario.params);
     setResults(scenario.results);
     setActiveTab("simulator");
     
     toast({
       title: "Skenaario ladattu",
-      description: `Skenaario "${scenario.name}" on ladattu simulaattoriin.`
+      description: "Skenaario on ladattu simulaattoriin."
     });
-  }, [savedScenarios]);
+  }, []);
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
@@ -188,18 +167,10 @@ const SimulationDashboard: React.FC = () => {
         <div className="flex justify-between items-center mb-4">
           <TabsList>
             <TabsTrigger value="simulator">Simulaattori</TabsTrigger>
-            <TabsTrigger value="scenarios">Skenaariot ({savedScenarios.length})</TabsTrigger>
+            <TabsTrigger value="scenarios">Skenaariot</TabsTrigger>
+            <TabsTrigger value="reports">Raportit</TabsTrigger>
             <TabsTrigger value="guide">Ohjeet</TabsTrigger>
           </TabsList>
-          
-          {results && activeTab === "simulator" && (
-            <button 
-              onClick={saveScenario}
-              className="bg-medical-blue text-white px-3 py-1 text-sm rounded hover:bg-opacity-90"
-            >
-              Tallenna skenaario
-            </button>
-          )}
         </div>
         
         <TabsContent value="simulator" className="space-y-6">
@@ -257,6 +228,7 @@ const SimulationDashboard: React.FC = () => {
                   {params.orBlocks && params.orBlocks.length > 0 && (
                     <TabsTrigger value="blocks">Saliblokit</TabsTrigger>
                   )}
+                  <TabsTrigger value="gantt">Gantt-kaavio</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="metrics" className="pt-4">
@@ -360,6 +332,13 @@ const SimulationDashboard: React.FC = () => {
                     </CardContent>
                   </Card>
                 </TabsContent>
+                
+                <TabsContent value="gantt" className="pt-4">
+                  <GanttChart 
+                    surgeryList={params.customSurgeryList || []}
+                    patientClasses={params.patientClasses}
+                  />
+                </TabsContent>
               </Tabs>
             </div>
           ) : (
@@ -374,126 +353,62 @@ const SimulationDashboard: React.FC = () => {
         </TabsContent>
         
         <TabsContent value="scenarios">
-          {savedScenarios.length === 0 ? (
-            <Card>
-              <CardContent className="flex items-center justify-center h-40">
-                <p className="text-muted-foreground">
-                  Ei tallennettuja skenaarioita. Aja simulaatio ja tallenna skenaario nähdäksesi sen täällä.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {savedScenarios.map((scenario, index) => (
-                <Card key={index} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => loadScenario(index)}>
-                  <CardHeader>
-                    <CardTitle>{scenario.name}</CardTitle>
-                    <CardDescription>
-                      {scenario.params.beds} vuodetta, {scenario.params.nurses} hoitajaa
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span>Potilasjakauma:</span>
-                        <div className="flex gap-1">
-                          {Object.entries(scenario.params.patientClassDistribution).map(([id, value]) => (
-                            <span key={id} className="px-1 rounded text-xs" style={{
-                              backgroundColor: scenario.params.patientClasses.find(pc => pc.id === id)?.color,
-                              color: 'white'
-                            }}>
-                              {id}: {Math.round(value * 100)}%
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      {scenario.results && (
-                        <>
-                          <div className="flex justify-between text-sm">
-                            <span>Keskim. vuodekäyttö:</span>
-                            <span className="font-medium">
-                              {Math.round(scenario.results.meanBedOccupancy * 100)}%
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span>Keskim. odotusaika:</span>
-                            <span className="font-medium">
-                              {Math.round(scenario.results.meanWaitTime)} min
-                            </span>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+          <ScenarioManager 
+            currentParams={params}
+            currentResults={results}
+            onLoadScenario={handleLoadScenario}
+          />
+        </TabsContent>
+        
+        <TabsContent value="reports">
+          <ReportExport 
+            results={results}
+            params={params}
+            patientClasses={params.patientClasses}
+          />
         </TabsContent>
         
         <TabsContent value="guide">
           <Card>
             <CardHeader>
-              <CardTitle>Miten PACU-simulaation suunnittelu kannattaa aloittaa?</CardTitle>
+              <CardTitle>Johdon työkalut PACU-simulaation hallintaan</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <h3 className="font-semibold">Simulaation tarkoitus</h3>
-                <p>Tämän sovelluksen avulla voit mallintaa heräämön (PACU) toimintaa ja resurssitarpeita erilaisilla potilasmäärillä ja -tyypeillä. Simulaatio käyttää diskreettiä tapahtumasimulointia (DES) mallintaakseen potilasvirtaa.</p>
+                <p>Tämän sovelluksen avulla voit mallintaa heräämön (PACU) toimintaa ja resurssitarpeita erilaisilla potilasmäärillä ja -tyypeillä. Sovellus on suunniteltu johdon tarpeisiin, mahdollistaen datapohjaisen päätöksenteon ja resurssien optimoinnin.</p>
               </div>
               
               <div className="space-y-2">
-                <h3 className="font-semibold">Leikkauslistan ja saliblokkien kytkeminen</h3>
-                <p>Voit kytkeä PACU-kuormitussimulointiin konkreettisen leikkauslistan ja salisuunnittelun:</p>
+                <h3 className="font-semibold">Uudet johdon ominaisuudet</h3>
+                <p>Sovellus sisältää seuraavat työkalut johdon käyttöön:</p>
                 <ul className="list-disc pl-5 space-y-1">
-                  <li>Määrittele leikkaussalit ja niiden blokit "Salisuunnittelu"-välilehdellä</li>
-                  <li>Luo automaattisesti generoitu leikkauslista "Leikkauslista"-välilehdeltä</li>
-                  <li>Lataa CSV-tiedosto joka sisältää tiedot leikkauksista</li>
-                  <li>Tutki miten eri leikkausaikataulut vaikuttavat PACU:n kuormitukseen</li>
+                  <li>Gantt-kaaviot visualisoivat leikkaussalien ja heräämön aikatauluja</li>
+                  <li>Skenaarioiden vertailu auttaa näkemään eri vaihtoehtojen vaikutukset</li>
+                  <li>Raporttien vienti mahdollistaa tulosten jakamisen johtoryhmien kokouksissa</li>
+                  <li>Interaktiiviset visualisoinnit tukevat resurssien käytön optimointia</li>
                 </ul>
               </div>
               
               <div className="space-y-2">
-                <h3 className="font-semibold">Potilasluokat</h3>
-                <p>Simulaatio jakaa potilaat neljään luokkaan:</p>
+                <h3 className="font-semibold">Skenaarioiden hallinta</h3>
+                <p>Skenaarioiden hallintajärjestelmä mahdollistaa:</p>
                 <ul className="list-disc pl-5 space-y-1">
-                  <li>Luokka A: Same-day kotiutus heräämöstä</li>
-                  <li>Luokka B: Next-day kotiutus (yö heräämössä)</li>
-                  <li>Luokka C: Overnight → ward</li>
-                  <li>Luokka D: Standard PACU → ward samana päivänä</li>
+                  <li>Skenaarioiden tallentamisen nimen, kuvauksen ja tagien kanssa</li>
+                  <li>Skenaarioiden vertailun keskenään</li>
+                  <li>Resurssitarpeiden arvioinnin eri potilasmäärillä</li>
+                  <li>Pitkän aikavälin kapasiteettisuunnittelun</li>
                 </ul>
               </div>
               
               <div className="space-y-2">
-                <h3 className="font-semibold">Blokki-pohjainen aikataulutus</h3>
-                <p>Uusi salisuunnittelu-työkalu mahdollistaa:</p>
+                <h3 className="font-semibold">Raportointi</h3>
+                <p>Voit luoda ja viedä raportteja:</p>
                 <ul className="list-disc pl-5 space-y-1">
-                  <li>Leikkaussalien määrittämisen (lisääminen/poistaminen)</li>
-                  <li>Aikablokkien luomisen ja hallinnan</li>
-                  <li>Potilasluokkien kohdistamisen tiettyihin blokkeihin</li>
-                  <li>Kuormituksen optimoinnin PACU:ssa</li>
+                  <li>Excel-muodossa (CSV) tarkempaa analyysia varten</li>
+                  <li>PDF-muodossa esittämistä varten</li>
+                  <li>Valitse, mitkä mittarit ja visualisoinnit sisällytetään raporttiin</li>
                 </ul>
-              </div>
-              
-              <div className="space-y-2">
-                <h3 className="font-semibold">Resurssit</h3>
-                <p>Voit säätää vuodepaikkojen ja hoitajien määrää sekä hoitaja-potilassuhdetta. Simulaatio estää uusia saapumisia, jos kumpi tahansa resurssi on täynnä.</p>
-              </div>
-              
-              <div className="space-y-2">
-                <h3 className="font-semibold">Tulokset</h3>
-                <p>Simulaation jälkeen näet useita hyödyllisiä mittareita:</p>
-                <ul className="list-disc pl-5 space-y-1">
-                  <li>Vuodepaikkojen ja hoitajien käyttöasteet</li>
-                  <li>Odotusviiveet</li>
-                  <li>Potilasjakauman</li>
-                  <li>Yhteenvedon keskeisistä tunnusluvuista</li>
-                </ul>
-              </div>
-              
-              <div className="space-y-2">
-                <h3 className="font-semibold">Skenaarioiden vertailu</h3>
-                <p>Tallenna eri skenaarioita vertaillaksesi miten erilaiset potilasjakaumat tai resurssimäärät vaikuttavat heräämön toimintaan. Tämä auttaa kapasiteettisuunnittelussa ja henkilöstöbudjetin laatimisessa.</p>
               </div>
             </CardContent>
           </Card>

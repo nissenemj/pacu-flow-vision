@@ -12,7 +12,7 @@ const Index: React.FC = () => {
       </main>
       <footer className="border-t py-4">
         <div className="container mx-auto px-4 text-center text-sm text-gray-500">
-          PACU Flow Vision &copy; 2025 - Heräämösimulointityökalu
+          PACU Flow Vision &copy; 2025 - Heräämösimuloinnin johtamistyökalu
         </div>
       </footer>
     </div>
