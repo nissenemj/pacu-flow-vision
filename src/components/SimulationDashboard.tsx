@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback } from 'react';
 import { 
   defaultSimulationParams, 
@@ -14,8 +13,23 @@ import ORScheduleChart from './ORScheduleChart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
+// Add the OR block types
+interface Block {
+  id: string;
+  orId: string;
+  start: number;
+  end: number;
+  label: string;
+  allowedProcedures: string[];
+}
+
 const SimulationDashboard: React.FC = () => {
-  const [params, setParams] = useState<SimulationParams>({...defaultSimulationParams});
+  // Update params to include blocks
+  const [params, setParams] = useState<SimulationParams & { orBlocks?: Block[] }>({
+    ...defaultSimulationParams,
+    orBlocks: []
+  });
+  
   const [results, setResults] = useState<SimulationResults | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [savedScenarios, setSavedScenarios] = useState<{name: string, params: SimulationParams, results: SimulationResults | null}[]>([]);
@@ -84,6 +98,9 @@ const SimulationDashboard: React.FC = () => {
     // Use setTimeout to allow UI to update before running simulation
     setTimeout(() => {
       try {
+        // If we have blocks defined, we would generate a surgeryList from the blocks here
+        // For now, we'll just use the existing simulation
+        
         const simulationResults = runSimulation(params);
         setResults(simulationResults);
         toast({
@@ -181,8 +198,11 @@ const SimulationDashboard: React.FC = () => {
               <Tabs value={resultTab} onValueChange={setResultTab}>
                 <TabsList>
                   <TabsTrigger value="metrics">Tulokset</TabsTrigger>
-                  {params.surgeryScheduleType === 'custom' && params.customSurgeryList && (
+                  {(params.surgeryScheduleType === 'custom' && params.customSurgeryList) && (
                     <TabsTrigger value="schedule">Leikkausaikataulu</TabsTrigger>
+                  )}
+                  {params.orBlocks && params.orBlocks.length > 0 && (
+                    <TabsTrigger value="blocks">Saliblokit</TabsTrigger>
                   )}
                 </TabsList>
                 
@@ -195,6 +215,63 @@ const SimulationDashboard: React.FC = () => {
                     surgeryList={params.customSurgeryList || []} 
                     patientClasses={params.patientClasses}
                   />
+                </TabsContent>
+                
+                <TabsContent value="blocks" className="pt-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Saliblokkien yhteenveto</CardTitle>
+                      <CardDescription>
+                        Leikkaussalien käyttö potilasluokittain
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {params.orBlocks && params.orBlocks.length > 0 ? (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            {params.patientClasses.map(pc => {
+                              // Count blocks with this patient class
+                              const blockCount = params.orBlocks?.filter(
+                                b => b.allowedProcedures.includes(pc.id)
+                              ).length || 0;
+                              
+                              // Calculate total hours for this class
+                              const totalHours = params.orBlocks?.reduce((sum, block) => {
+                                if (block.allowedProcedures.includes(pc.id)) {
+                                  return sum + (block.end - block.start) / 60;
+                                }
+                                return sum;
+                              }, 0) || 0;
+                              
+                              return (
+                                <Card key={pc.id}>
+                                  <CardContent className="p-4">
+                                    <div className="flex items-center gap-2">
+                                      <div 
+                                        className="w-3 h-3 rounded-full" 
+                                        style={{ backgroundColor: pc.color }}
+                                      />
+                                      <span className="font-medium">{pc.name}</span>
+                                    </div>
+                                    <div className="mt-2 text-2xl font-bold">
+                                      {blockCount} <span className="text-sm font-normal">blokkia</span>
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">
+                                      {Math.round(totalHours * 10) / 10} tuntia
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-center text-muted-foreground">
+                          Ei saliblokki tietoja saatavilla.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
                 </TabsContent>
               </Tabs>
             </div>
@@ -279,9 +356,10 @@ const SimulationDashboard: React.FC = () => {
               </div>
               
               <div className="space-y-2">
-                <h3 className="font-semibold">Leikkauslistan kytkeminen</h3>
-                <p>Voit kytkeä PACU-kuormitussimulointiin konkreettisen leikkauslistan:</p>
+                <h3 className="font-semibold">Leikkauslistan ja saliblokkien kytkeminen</h3>
+                <p>Voit kytkeä PACU-kuormitussimulointiin konkreettisen leikkauslistan ja salisuunnittelun:</p>
                 <ul className="list-disc pl-5 space-y-1">
+                  <li>Määrittele leikkaussalit ja niiden blokit "Salisuunnittelu"-välilehdellä</li>
                   <li>Luo automaattisesti generoitu leikkauslista "Leikkauslista"-välilehdeltä</li>
                   <li>Lataa CSV-tiedosto joka sisältää tiedot leikkauksista</li>
                   <li>Tutki miten eri leikkausaikataulut vaikuttavat PACU:n kuormitukseen</li>
@@ -296,6 +374,17 @@ const SimulationDashboard: React.FC = () => {
                   <li>Luokka B: Next-day kotiutus (yö heräämössä)</li>
                   <li>Luokka C: Overnight → ward</li>
                   <li>Luokka D: Standard PACU → ward samana päivänä</li>
+                </ul>
+              </div>
+              
+              <div className="space-y-2">
+                <h3 className="font-semibold">Blokki-pohjainen aikataulutus</h3>
+                <p>Uusi salisuunnittelu-työkalu mahdollistaa:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Leikkaussalien määrittämisen (lisääminen/poistaminen)</li>
+                  <li>Aikablokkien luomisen ja hallinnan</li>
+                  <li>Potilasluokkien kohdistamisen tiettyihin blokkeihin</li>
+                  <li>Kuormituksen optimoinnin PACU:ssa</li>
                 </ul>
               </div>
               

@@ -1,5 +1,4 @@
-
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -9,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { PlayCircle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import SurgeryScheduler from './SurgeryScheduler';
+import BlockScheduler from './BlockScheduler';
 
 interface SimulationParametersProps {
   params: SimulationParams;
@@ -38,14 +38,27 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
   const handleScheduleTypeChange = (type: 'template' | 'custom') => {
     onParamChange('surgeryScheduleType', type);
   };
+  
+  // Handle OR block schedule change
+  const handleBlockScheduleChange = (blocks: any[]) => {
+    onParamChange('orBlocks', blocks);
+  };
 
+  const [activeTab, setActiveTab] = useState("resources");
+  
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <Tabs defaultValue="resources" className="col-span-2 space-y-4">
+      <Tabs 
+        defaultValue="resources" 
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="col-span-2 space-y-4"
+      >
         <TabsList>
           <TabsTrigger value="resources">Resurssit</TabsTrigger>
           <TabsTrigger value="patients">Potilasjakauma</TabsTrigger>
           <TabsTrigger value="schedule">Leikkauslista</TabsTrigger>
+          <TabsTrigger value="blocks">Salisuunnittelu</TabsTrigger>
         </TabsList>
         
         <TabsContent value="resources">
@@ -210,6 +223,13 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
             simulationDays={params.simulationDays}
             onScheduleGenerated={handleSurgeryListGenerated}
             onScheduleTypeChange={handleScheduleTypeChange}
+          />
+        </TabsContent>
+        
+        <TabsContent value="blocks">
+          <BlockScheduler 
+            patientClasses={params.patientClasses}
+            onScheduleChange={handleBlockScheduleChange}
           />
         </TabsContent>
         
