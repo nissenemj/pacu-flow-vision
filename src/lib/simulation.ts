@@ -864,3 +864,453 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   // Queues for different phases
   const arrivalQueue: Patient[] = []; // Queue for initial arrival
   const phase1Queue: Patient[] = [];  // Queue for Phase I
+  const phase2Queue: Patient[] = [];  // Queue for Phase II
+  
+  // Transfer delay tracking
+  let transferDelayCount = 0;
+  let totalTransferDelayMinutes = 0;
+  
+  // Phase transition time tracking
+  const phase1Durations: number[] = [];
+  const phase2Durations: number[] = [];
+  const waitForPhase2Times: number[] = [];
+  
+  // Active patients in PACU
+  const activePacuPatients: Patient[] = [];
+  
+  // Generate all surgery finish times (PACU arrivals)
+  let allArrivals: number[] = [];
+  let blockScheduledCases: SurgeryCase[] = [];
+  
+  // Track OR utilization if using custom surgery list
+  const orUtilization: Record<string, number[]> = {};
+  
+  // Use custom surgery list or generate from template
+  if (blockScheduleEnabled && orBlocks && orBlocks.length > 0) {
+    // Use blocks to schedule surgeries
+    const activeORs = ors?.filter(or => orBlocks.some(block => block.orId === or.id)) || [];
+    
+    // Calculate total OR cost
+    const orCosts = activeORs.reduce((total, or) => total + (or.isExtra ? or.costPerDay : 0), 0);
+    
+    // Schedule cases based on blocks
+    const averageDaily = surgeryScheduleTemplate.averageDailySurgeries;
+    const totalSurgeries = Math.round(averageDaily * simulationDays);
+    
+    blockScheduledCases = scheduleCasesInBlocks(
+      patientClasses, 
+      orBlocks, 
+      simulationDays,
+      totalSurgeries
+    );
+    
+    // Calculate surgery finish times from scheduled cases
+    allArrivals = blockScheduledCases.map(surgery => {
+      // Surgery finish time = start + duration
+      return surgery.scheduledStartTime + surgery.duration;
+    });
+    
+    // Calculate OR utilization
+    const orIds = [...new Set(blockScheduledCases.map(s => s.orRoom))];
+    orIds.forEach(orId => {
+      orUtilization[orId] = new Array(timePoints).fill(0);
+      
+      // Mark time slots where OR is in use
+      blockScheduledCases.forEach(surgery => {
+        if (surgery.orRoom === orId) {
+          const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
+          const endSlot = Math.floor((surgery.scheduledStartTime + surgery.duration) / timeIncrement);
+          
+          for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
+            orUtilization[orId][slot] = 1;
+          }
+        }
+      });
+    });
+    
+    // Calculate overtime (time used outside regular hours)
+    let overtimeMinutes = 0;
+    for (const or of activeORs) {
+      const orCases = blockScheduledCases.filter(s => s.orRoom === or.id);
+      for (const surgeryCase of orCases) {
+        const dayOfSurgery = Math.floor(surgeryCase.scheduledStartTime / 1440);
+        const dayStartMinute = dayOfSurgery * 1440;
+        const surgeryEnd = surgeryCase.scheduledStartTime + surgeryCase.duration;
+        const dayCloseTime = dayStartMinute + or.closeTime;
+        
+        if (surgeryEnd > dayCloseTime) {
+          overtimeMinutes += (surgeryEnd - dayCloseTime);
+        }
+      }
+    }
+    
+    // Add block scheduling results
+    const blockScheduleResults = {
+      blocks: orBlocks,
+      orUtilization: Object.fromEntries(
+        Object.entries(orUtilization).map(([orId, slots]) => {
+          // Calculate utilization percentage
+          const usedSlots = slots.filter(s => s > 0).length;
+          return [orId, usedSlots / slots.length];
+        })
+      ),
+      totalCost: orCosts,
+      overtimeMinutes
+    };
+    
+    // Sort arrivals
+    allArrivals.sort((a, b) => a - b);
+  } else {
+    // Use existing methods for surgery scheduling
+    if (surgeryScheduleType === 'custom' && customSurgeryList && customSurgeryList.length > 0) {
+      // Initialize OR tracking
+      const orRooms = [...new Set(customSurgeryList.map(s => s.orRoom))];
+      orRooms.forEach(room => {
+        orUtilization[room] = new Array(timePoints).fill(0);
+      });
+      
+      // Generate from custom list
+      customSurgeryList.forEach((surgery) => {
+        // Surgery finish time = start + duration
+        const finishTime = surgery.scheduledStartTime + surgery.duration;
+        allArrivals.push(finishTime);
+        
+        // Track OR utilization
+        const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
+        const endSlot = Math.floor(finishTime / timeIncrement);
+        
+        for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
+          orUtilization[surgery.orRoom][slot] = 1;
+        }
+      });
+    } else {
+      // Use template-based generation
+      for (let day = 0; day < simulationDays; day++) {
+        const dailyArrivals = generateDailySurgeryFinishTimes(day, surgeryScheduleTemplate);
+        allArrivals.push(...dailyArrivals);
+      }
+    }
+
+    allArrivals.sort((a, b) => a - b);
+  }
+  
+  // Generate patients with their arrival times
+  const allPatients: Patient[] = allArrivals.map((arrivalTime, index) => {
+    // Determine patient class based on distribution
+    const rand = Math.random();
+    let cumulative = 0;
+    let selectedClassId = patientClasses[0].id;
+    
+    for (const [classId, probability] of Object.entries(patientClassDistribution)) {
+      cumulative += probability;
+      if (rand <= cumulative) {
+        selectedClassId = classId;
+        break;
+      }
+    }
+    
+    // Increment patient type count
+    patientTypeCount[selectedClassId] = (patientTypeCount[selectedClassId] || 0) + 1;
+    
+    // Get the patient class details
+    const patientClass = patientClasses.find(pc => pc.id === selectedClassId)!;
+    
+    // Calculate stay duration with some randomness
+    const stayDuration = Math.max(30, Math.round(
+      logNormalRandom(patientClass.meanStayMinutes, patientClass.stdDevMinutes)
+    ));
+    
+    // Create the patient
+    return {
+      id: patientId++,
+      classId: selectedClassId,
+      arrivalTime,
+      stayDuration,
+      careStartTime: null,
+      departureTime: null,
+      waitTime: null,
+      nurseCareTime: null,
+      currentPhase: 'waiting',
+      phaseStartTimes: {
+        phase1: null,
+        phase2: null
+      },
+      phaseEndTimes: {
+        phase1: null,
+        phase2: null
+      },
+      assignedNurseRoles: [],
+      equipmentUse: [],
+      transferDelay: null
+    };
+  });
+  
+  // Push initial patients to arrival queue
+  for (const patient of allPatients) {
+    arrivalQueue.push(patient);
+  }
+
+  // SIMULATION MAIN LOOP
+  for (let t = 0; t < totalMinutes; t += timeIncrement) {
+    const timeIndex = Math.floor(t / timeIncrement);
+    
+    // Process arrivals
+    while (arrivalQueue.length > 0 && arrivalQueue[0].arrivalTime <= t) {
+      const patient = arrivalQueue.shift()!;
+      
+      // Check if Phase I bed is available
+      if (occupiedPhase1Beds < phase1Beds) {
+        // Bed available, start care
+        patient.careStartTime = t;
+        patient.waitTime = t - patient.arrivalTime;
+        waitTimes.push(patient.waitTime);
+        
+        patient.currentPhase = 'phase1';
+        patient.phaseStartTimes.phase1 = t;
+        
+        // Get patient class details
+        const patientClass = patientClasses.find(pc => pc.id === patient.classId)!;
+        
+        // Calculate phase end times
+        patient.phaseEndTimes.phase1 = t + patientClass.phase1Minutes;
+        
+        // Increment occupied beds
+        occupiedPhase1Beds++;
+        occupiedBeds++;
+        
+        // Add to active patients
+        activePacuPatients.push(patient);
+      } else {
+        // No bed available, add to phase1Queue
+        phase1Queue.push(patient);
+      }
+    }
+    
+    // Process Phase I endings
+    for (let i = activePacuPatients.length - 1; i >= 0; i--) {
+      const patient = activePacuPatients[i];
+      
+      // Skip if not in Phase I or not ready to end Phase I
+      if (patient.currentPhase !== 'phase1' || !patient.phaseEndTimes.phase1 || patient.phaseEndTimes.phase1 > t) {
+        continue;
+      }
+      
+      // Record Phase I duration
+      const phase1Duration = t - patient.phaseStartTimes.phase1!;
+      phase1Durations.push(phase1Duration);
+      
+      // Free Phase I bed
+      occupiedPhase1Beds--;
+      
+      // Check if Phase II bed is available
+      if (occupiedPhase2Beds < phase2Beds) {
+        // Transition to Phase II
+        patient.currentPhase = 'phase2';
+        patient.phaseStartTimes.phase2 = t;
+        
+        // Get patient class details
+        const patientClass = patientClasses.find(pc => pc.id === patient.classId)!;
+        
+        // Calculate phase end times
+        patient.phaseEndTimes.phase2 = t + patientClass.phase2Minutes;
+        
+        // Increment occupied Phase II beds
+        occupiedPhase2Beds++;
+        
+        // No waiting for Phase II
+        waitForPhase2Times.push(0);
+      } else {
+        // No Phase II bed available, add to phase2Queue
+        patient.currentPhase = 'waiting';
+        phase2Queue.push(patient);
+      }
+    }
+    
+    // Process Phase II endings
+    for (let i = activePacuPatients.length - 1; i >= 0; i--) {
+      const patient = activePacuPatients[i];
+      
+      // Skip if not in Phase II or not ready to end Phase II
+      if (patient.currentPhase !== 'phase2' || !patient.phaseEndTimes.phase2 || patient.phaseEndTimes.phase2 > t) {
+        continue;
+      }
+      
+      // Record Phase II duration
+      const phase2Duration = t - patient.phaseStartTimes.phase2!;
+      phase2Durations.push(phase2Duration);
+      
+      // Get patient class details
+      const patientClass = patientClasses.find(pc => pc.id === patient.classId)!;
+      
+      // Check for transfer delay
+      let transferDelay = 0;
+      if (patientClass.transferDelayProbability > 0 && Math.random() < patientClass.transferDelayProbability) {
+        transferDelay = Math.round(logNormalRandom(patientClass.transferDelayMinutes, patientClass.transferDelayMinutes / 3));
+        patient.transferDelay = transferDelay;
+        transferDelayCount++;
+        totalTransferDelayMinutes += transferDelay;
+      }
+      
+      // Complete patient care
+      patient.currentPhase = 'completed';
+      patient.departureTime = t + transferDelay;
+      
+      // Free Phase II bed immediately (transfer delay is administrative)
+      occupiedPhase2Beds--;
+      occupiedBeds--;
+      
+      // Remove from active patients
+      activePacuPatients.splice(i, 1);
+      
+      // Add to completed patients
+      patients.push(patient);
+      
+      // Process Phase II queue if there are waiting patients
+      if (phase2Queue.length > 0) {
+        const nextPatient = phase2Queue.shift()!;
+        
+        // Record wait time for Phase II
+        const waitForPhase2 = t - nextPatient.phaseEndTimes.phase1!;
+        waitForPhase2Times.push(waitForPhase2);
+        
+        // Start Phase II for this patient
+        nextPatient.currentPhase = 'phase2';
+        nextPatient.phaseStartTimes.phase2 = t;
+        
+        // Get patient class details
+        const nextPatientClass = patientClasses.find(pc => pc.id === nextPatient.classId)!;
+        
+        // Calculate phase end time
+        nextPatient.phaseEndTimes.phase2 = t + nextPatientClass.phase2Minutes;
+        
+        // Increment occupied Phase II beds
+        occupiedPhase2Beds++;
+      }
+    }
+    
+    // Process Phase I queue if there are Phase I beds available
+    while (phase1Queue.length > 0 && occupiedPhase1Beds < phase1Beds) {
+      const patient = phase1Queue.shift()!;
+      
+      // Start care
+      patient.careStartTime = t;
+      patient.waitTime = t - patient.arrivalTime;
+      waitTimes.push(patient.waitTime);
+      
+      patient.currentPhase = 'phase1';
+      patient.phaseStartTimes.phase1 = t;
+      
+      // Get patient class details
+      const patientClass = patientClasses.find(pc => pc.id === patient.classId)!;
+      
+      // Calculate phase end time
+      patient.phaseEndTimes.phase1 = t + patientClass.phase1Minutes;
+      
+      // Increment occupied beds
+      occupiedPhase1Beds++;
+      occupiedBeds++;
+      
+      // Add to active patients
+      activePacuPatients.push(patient);
+    }
+    
+    // Record metrics for this time point
+    bedOccupancy[timeIndex] = occupiedBeds / beds;
+    phase1BedOccupancy[timeIndex] = phase1Beds > 0 ? occupiedPhase1Beds / phase1Beds : 0;
+    phase2BedOccupancy[timeIndex] = phase2Beds > 0 ? occupiedPhase2Beds / phase2Beds : 0;
+    queueLengthOverTime[timeIndex] = phase1Queue.length + phase2Queue.length;
+  }
+  
+  // Calculate final statistics
+  const meanWaitTime = waitTimes.length > 0 ? 
+    waitTimes.reduce((sum, time) => sum + time, 0) / waitTimes.length : 0;
+  
+  const p95WaitTime = calculatePercentile(waitTimes, 95);
+  
+  const maxBedOccupancy = Math.max(...bedOccupancy);
+  const meanBedOccupancy = bedOccupancy.reduce((sum, occ) => sum + occ, 0) / bedOccupancy.length;
+  
+  // Calculate mean nurse utilization
+  const meanNurseUtilization = nurseUtilization.reduce((sum, util) => sum + util, 0) / nurseUtilization.length;
+  const maxNurseUtilization = Math.max(...nurseUtilization);
+  
+  // Calculate mean phase durations
+  const meanPhase1Duration = phase1Durations.length > 0 ? 
+    phase1Durations.reduce((sum, duration) => sum + duration, 0) / phase1Durations.length : 0;
+  
+  const meanPhase2Duration = phase2Durations.length > 0 ?
+    phase2Durations.reduce((sum, duration) => sum + duration, 0) / phase2Durations.length : 0;
+  
+  const meanWaitForPhase2 = waitForPhase2Times.length > 0 ?
+    waitForPhase2Times.reduce((sum, wait) => sum + wait, 0) / waitForPhase2Times.length : 0;
+  
+  // Calculate mean transfer delay
+  const meanTransferDelay = transferDelayCount > 0 ? totalTransferDelayMinutes / transferDelayCount : 0;
+  
+  // Calculate bed turnover time
+  const bedTurnoverTime = bedTurnoverTimes.length > 0 ?
+    bedTurnoverTimes.reduce((sum, time) => sum + time, 0) / bedTurnoverTimes.length : 0;
+  
+  // Collect peak times (times where bed occupancy is above 90%)
+  const peakTimes: { time: number; occupancy: number }[] = [];
+  for (let i = 0; i < bedOccupancy.length; i++) {
+    if (bedOccupancy[i] > 0.9) {
+      peakTimes.push({
+        time: i * timeIncrement,
+        occupancy: bedOccupancy[i]
+      });
+    }
+  }
+
+  // Prepare the results
+  const results: SimulationResults = {
+    patients,
+    bedOccupancy,
+    phase1BedOccupancy,
+    phase2BedOccupancy,
+    nurseUtilization,
+    nurseUtilizationByRole,
+    waitTimes,
+    meanWaitTime,
+    p95WaitTime,
+    maxBedOccupancy,
+    meanBedOccupancy,
+    bedTurnoverTime,
+    maxNurseUtilization,
+    meanNurseUtilization,
+    patientTypeCount,
+    orUtilization: Object.keys(orUtilization).length > 0 ? orUtilization : undefined,
+    peakTimes: peakTimes.length > 0 ? peakTimes : undefined,
+    queueLengthOverTime,
+    equipmentUtilization,
+    transferDelays: {
+      count: transferDelayCount,
+      totalMinutes: totalTransferDelayMinutes,
+      meanDelayMinutes: meanTransferDelay
+    },
+    phaseTransitionTimes: {
+      meanPhase1Duration,
+      meanPhase2Duration,
+      meanWaitForPhase2
+    }
+  };
+  
+  // Add block schedule results if applicable
+  if (blockScheduleEnabled && orBlocks && orBlocks.length > 0) {
+    const orCosts = (ors?.filter(or => or.isExtra) || []).reduce((total, or) => total + or.costPerDay, 0);
+    
+    results.blockSchedule = {
+      blocks: orBlocks,
+      orUtilization: Object.fromEntries(
+        Object.entries(orUtilization).map(([orId, slots]) => {
+          const usedSlots = slots.filter(s => s > 0).length;
+          return [orId, usedSlots / slots.length];
+        })
+      ),
+      totalCost: orCosts,
+      overtimeMinutes: 0 // Calculate this properly based on OR schedules
+    };
+  }
+
+  return results;
+}
