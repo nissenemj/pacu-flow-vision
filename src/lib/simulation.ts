@@ -17,6 +17,14 @@ export interface SimulationParams {
   simulationDays: number;
   surgeryScheduleType: 'template' | 'custom';
   customSurgeryList?: SurgeryCase[]; // Optional custom surgery list
+  blockScheduleEnabled?: boolean;
+  orBlocks?: ORBlock[];
+  ors?: OR[];
+  optimizationWeights?: {
+    peakOccupancy: number;
+    overtime: number;
+    extraORCost: number;
+  };
 }
 
 export interface SurgeryCase {
@@ -63,6 +71,12 @@ export interface SimulationResults {
   patientTypeCount: Record<string, number>;
   orUtilization?: Record<string, number[]>; // Added OR utilization tracking
   peakTimes?: { time: number; occupancy: number }[]; // Peak occupancy times
+  blockSchedule?: {
+    blocks: ORBlock[];
+    orUtilization: Record<string, number>;
+    totalCost: number;
+    overtimeMinutes: number;
+  };
 }
 
 // Generate random number from log-normal distribution
@@ -210,6 +224,236 @@ export function generateCustomSurgeryList(
   return surgeries.sort((a, b) => a.scheduledStartTime - b.scheduledStartTime);
 }
 
+export interface ORBlock {
+  id: string;
+  orId: string;
+  start: number; // Minutes from day start
+  end: number;   // Minutes from day start
+  allowedClasses: string[]; // IDs of patient classes allowed in this block
+  day: number;   // Day index in simulation
+}
+
+export interface OR {
+  id: string;
+  name: string;
+  equipmentLevel: number; // 1-5 equipment level
+  openTime: number;       // Minutes from day start, e.g., 480 for 8am
+  closeTime: number;      // Minutes from day start, e.g., 960 for 4pm
+  isExtra: boolean;       // Whether this is an additional OR
+  costPerDay: number;     // Cost to operate this OR per day
+}
+
+// New function to generate default blocks for an OR
+export function generateDefaultBlocks(or: OR, day: number): ORBlock[] {
+  const morningBlock: ORBlock = {
+    id: `block-${or.id}-${day}-morning`,
+    orId: or.id,
+    start: or.openTime,
+    end: or.openTime + 180, // 3 hour morning block
+    allowedClasses: ["A", "D"], // Default to day surgery types
+    day
+  };
+  
+  const afternoonBlock: ORBlock = {
+    id: `block-${or.id}-${day}-afternoon`,
+    orId: or.id,
+    start: or.openTime + 180,
+    end: or.openTime + 360, // 3 hour afternoon block
+    allowedClasses: ["A", "D"], // Default to day surgery types
+    day
+  };
+  
+  const eveningBlock: ORBlock = {
+    id: `block-${or.id}-${day}-evening`,
+    orId: or.id,
+    start: or.openTime + 360,
+    end: or.closeTime, // Until close time
+    allowedClasses: ["B", "C"], // Default to overnight types
+    day
+  };
+  
+  return [morningBlock, afternoonBlock, eveningBlock];
+}
+
+// Default OR configuration
+export const defaultORs: OR[] = [
+  {
+    id: "OR-1",
+    name: "OR-1",
+    equipmentLevel: 5,
+    openTime: 480, // 8am
+    closeTime: 960, // 4pm
+    isExtra: false,
+    costPerDay: 0 // Base OR, no extra cost
+  },
+  {
+    id: "OR-2",
+    name: "OR-2",
+    equipmentLevel: 5,
+    openTime: 480,
+    closeTime: 960,
+    isExtra: false,
+    costPerDay: 0
+  },
+  {
+    id: "OR-3",
+    name: "OR-3",
+    equipmentLevel: 4,
+    openTime: 480,
+    closeTime: 960,
+    isExtra: false,
+    costPerDay: 0
+  },
+  {
+    id: "OR-4",
+    name: "OR-4",
+    equipmentLevel: 4,
+    openTime: 480,
+    closeTime: 960,
+    isExtra: false,
+    costPerDay: 0
+  },
+  {
+    id: "OR-5",
+    name: "OR-5",
+    equipmentLevel: 3,
+    openTime: 480,
+    closeTime: 960,
+    isExtra: false,
+    costPerDay: 0
+  },
+  {
+    id: "OR-6",
+    name: "OR-6",
+    equipmentLevel: 3,
+    openTime: 480,
+    closeTime: 960,
+    isExtra: false,
+    costPerDay: 0
+  },
+  {
+    id: "OR-7",
+    name: "OR-7 (Extra)",
+    equipmentLevel: 4,
+    openTime: 480,
+    closeTime: 960,
+    isExtra: true,
+    costPerDay: 950 // Cost per day to operate this extra OR
+  },
+  {
+    id: "OR-8",
+    name: "OR-8 (Extra)",
+    equipmentLevel: 3,
+    openTime: 480,
+    closeTime: 960,
+    isExtra: true,
+    costPerDay: 850
+  }
+];
+
+// Generate default blocks for all ORs
+export function generateDefaultBlockSchedule(ors: OR[], days: number): ORBlock[] {
+  const blocks: ORBlock[] = [];
+  
+  for (const or of ors) {
+    for (let day = 0; day < days; day++) {
+      if (!or.isExtra || day === 0) { // Only include extra ORs for first day as example
+        blocks.push(...generateDefaultBlocks(or, day));
+      }
+    }
+  }
+  
+  return blocks;
+}
+
+// Create case scheduling function based on blocks
+function scheduleCasesInBlocks(
+  patientClasses: PatientClass[],
+  orBlocks: ORBlock[],
+  simulationDays: number,
+  totalSurgeries: number
+): SurgeryCase[] {
+  const surgeries: SurgeryCase[] = [];
+  let caseId = 1;
+  
+  // Group blocks by day
+  const blocksByDay: Record<number, ORBlock[]> = {};
+  for (const block of orBlocks) {
+    if (!blocksByDay[block.day]) {
+      blocksByDay[block.day] = [];
+    }
+    blocksByDay[block.day].push(block);
+  }
+  
+  // Distribute surgeries across days based on available blocks
+  const surgeriesPerDay = Math.ceil(totalSurgeries / simulationDays);
+  
+  for (let day = 0; day < simulationDays; day++) {
+    const dayBlocks = blocksByDay[day] || [];
+    if (dayBlocks.length === 0) continue;
+    
+    // Calculate how many surgeries to allocate to this day
+    const remainingSurgeries = totalSurgeries - surgeries.length;
+    const dailySurgeries = Math.min(surgeriesPerDay, remainingSurgeries);
+    if (dailySurgeries <= 0) break;
+    
+    // Distribute cases across blocks for this day
+    const casesPerBlock = Math.ceil(dailySurgeries / dayBlocks.length);
+    
+    for (const block of dayBlocks) {
+      // Calculate how many surgeries can fit in this block's time window
+      const blockDuration = block.end - block.start;
+      const avgCaseDuration = 120; // Assume 2 hours average per case
+      const maxCasesInBlock = Math.floor(blockDuration / avgCaseDuration);
+      const casesToAllocate = Math.min(casesPerBlock, maxCasesInBlock);
+      
+      if (casesToAllocate <= 0) continue;
+      
+      // Calculate available time per case
+      const timePerCase = blockDuration / casesToAllocate;
+      
+      // Only use allowed patient classes for this block
+      const eligibleClasses = patientClasses.filter(
+        pc => block.allowedClasses.includes(pc.id)
+      );
+      
+      if (eligibleClasses.length === 0) continue;
+      
+      // Schedule cases within this block
+      for (let i = 0; i < casesToAllocate; i++) {
+        // Stop if we've scheduled all needed surgeries
+        if (surgeries.length >= totalSurgeries) break;
+        
+        // Select a random patient class from allowed classes
+        const patientClass = eligibleClasses[
+          Math.floor(Math.random() * eligibleClasses.length)
+        ];
+        
+        // Calculate start time (minutes from simulation start)
+        const dayOffset = day * 1440; // Minutes in a day
+        const startTime = dayOffset + block.start + (i * timePerCase);
+        
+        // Generate case duration
+        const duration = Math.max(30, Math.round(
+          logNormalRandom(90, 30) // Base duration around 90 minutes
+        ));
+        
+        // Create the surgery case
+        surgeries.push({
+          id: `case-${caseId++}`,
+          classId: patientClass.id,
+          orRoom: block.orId,
+          scheduledStartTime: Math.round(startTime),
+          duration
+        });
+      }
+    }
+  }
+  
+  // Sort by scheduled start time
+  return surgeries.sort((a, b) => a.scheduledStartTime - b.scheduledStartTime);
+}
+
 export function runSimulation(params: SimulationParams): SimulationResults {
   const { 
     beds, 
@@ -220,7 +464,10 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     surgeryScheduleTemplate,
     simulationDays,
     surgeryScheduleType,
-    customSurgeryList
+    customSurgeryList,
+    blockScheduleEnabled,
+    orBlocks,
+    ors
   } = params;
 
   // Time tracking in minutes
@@ -258,33 +505,112 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   const allArrivals: number[] = [];
   
   // Use custom surgery list or generate from template
-  if (surgeryScheduleType === 'custom' && customSurgeryList && customSurgeryList.length > 0) {
-    // Initialize OR tracking
-    const orRooms = [...new Set(customSurgeryList.map(s => s.orRoom))];
-    orRooms.forEach(room => {
-      orUtilization[room] = new Array(timePoints).fill(0);
+  if (blockScheduleEnabled && orBlocks && orBlocks.length > 0) {
+    // Use blocks to schedule surgeries
+    const activeORs = ors?.filter(or => orBlocks.some(block => block.orId === or.id)) || [];
+    
+    // Calculate total OR cost
+    const orCosts = activeORs.reduce((total, or) => total + (or.isExtra ? or.costPerDay : 0), 0);
+    
+    // Schedule cases based on blocks
+    const averageDaily = surgeryScheduleTemplate.averageDailySurgeries;
+    const totalSurgeries = Math.round(averageDaily * simulationDays);
+    
+    const scheduledCases = scheduleCasesInBlocks(
+      patientClasses, 
+      orBlocks, 
+      simulationDays,
+      totalSurgeries
+    );
+    
+    // Calculate surgery finish times from scheduled cases
+    allArrivals = scheduledCases.map(surgery => {
+      // Surgery finish time = start + duration
+      return surgery.scheduledStartTime + surgery.duration;
     });
     
-    // Generate from custom list
-    customSurgeryList.forEach((surgery) => {
-      // Surgery finish time = start + duration
-      const finishTime = surgery.scheduledStartTime + surgery.duration;
-      allArrivals.push(finishTime);
+    // Calculate OR utilization
+    const orIds = [...new Set(scheduledCases.map(s => s.orRoom))];
+    orIds.forEach(orId => {
+      orUtilization[orId] = new Array(timePoints).fill(0);
       
-      // Track OR utilization
-      const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
-      const endSlot = Math.floor(finishTime / timeIncrement);
-      
-      for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
-        orUtilization[surgery.orRoom][slot] = 1;
-      }
+      // Mark time slots where OR is in use
+      scheduledCases.forEach(surgery => {
+        if (surgery.orRoom === orId) {
+          const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
+          const endSlot = Math.floor((surgery.scheduledStartTime + surgery.duration) / timeIncrement);
+          
+          for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
+            orUtilization[orId][slot] = 1;
+          }
+        }
+      });
     });
-  } else {
-    // Use template-based generation
-    for (let day = 0; day < simulationDays; day++) {
-      const dailyArrivals = generateDailySurgeryFinishTimes(day, surgeryScheduleTemplate);
-      allArrivals.push(...dailyArrivals);
+    
+    // Calculate overtime (time used outside regular hours)
+    let overtimeMinutes = 0;
+    for (const or of activeORs) {
+      const orCases = scheduledCases.filter(s => s.orRoom === or.id);
+      for (const surgeryCase of orCases) {
+        const dayOfSurgery = Math.floor(surgeryCase.scheduledStartTime / 1440);
+        const dayStartMinute = dayOfSurgery * 1440;
+        const surgeryEnd = surgeryCase.scheduledStartTime + surgeryCase.duration;
+        const dayCloseTime = dayStartMinute + or.closeTime;
+        
+        if (surgeryEnd > dayCloseTime) {
+          overtimeMinutes += (surgeryEnd - dayCloseTime);
+        }
+      }
     }
+    
+    // Add block scheduling results
+    const blockScheduleResults = {
+      blocks: orBlocks,
+      orUtilization: Object.fromEntries(
+        Object.entries(orUtilization).map(([orId, slots]) => {
+          // Calculate utilization percentage
+          const usedSlots = slots.filter(s => s > 0).length;
+          return [orId, usedSlots / slots.length];
+        })
+      ),
+      totalCost: orCosts,
+      overtimeMinutes
+    };
+    
+    // Sort arrivals
+    allArrivals.sort((a, b) => a - b);
+  } else {
+    // Use existing methods for surgery scheduling
+    if (surgeryScheduleType === 'custom' && customSurgeryList && customSurgeryList.length > 0) {
+      // Initialize OR tracking
+      const orRooms = [...new Set(customSurgeryList.map(s => s.orRoom))];
+      orRooms.forEach(room => {
+        orUtilization[room] = new Array(timePoints).fill(0);
+      });
+      
+      // Generate from custom list
+      customSurgeryList.forEach((surgery) => {
+        // Surgery finish time = start + duration
+        const finishTime = surgery.scheduledStartTime + surgery.duration;
+        allArrivals.push(finishTime);
+        
+        // Track OR utilization
+        const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
+        const endSlot = Math.floor(finishTime / timeIncrement);
+        
+        for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
+          orUtilization[surgery.orRoom][slot] = 1;
+        }
+      });
+    } else {
+      // Use template-based generation
+      for (let day = 0; day < simulationDays; day++) {
+        const dailyArrivals = generateDailySurgeryFinishTimes(day, surgeryScheduleTemplate);
+        allArrivals.push(...dailyArrivals);
+      }
+    }
+
+    allArrivals.sort((a, b) => a - b);
   }
 
   allArrivals.sort((a, b) => a - b);
@@ -296,11 +622,14 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     let cumulative = 0;
     let selectedClassId = patientClasses[0].id;
     
-    // If using custom list, get the patient class from the list
-    if (surgeryScheduleType === 'custom' && customSurgeryList) {
-      const surgeryCase = customSurgeryList.find(s => 
-        s.scheduledStartTime + s.duration === arrivalTime
-      );
+    // If using custom list or block schedule, get the patient class from the case
+    if ((surgeryScheduleType === 'custom' && customSurgeryList) || 
+        (blockScheduleEnabled && scheduledCases.length > 0)) {
+      
+      const surgeryCase = blockScheduleEnabled 
+        ? scheduledCases.find(s => s.scheduledStartTime + s.duration === arrivalTime)
+        : customSurgeryList?.find(s => s.scheduledStartTime + s.duration === arrivalTime);
+        
       if (surgeryCase) {
         selectedClassId = surgeryCase.classId;
         
@@ -461,7 +790,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   const maxNurseUtilization = Math.max(...nurseUtilization);
   const meanNurseUtilization = nurseUtilization.reduce((sum, val) => sum + val, 0) / nurseUtilization.length;
 
-  return {
+  const results: SimulationResults = {
     patients,
     bedOccupancy,
     nurseUtilization,
@@ -476,6 +805,48 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     orUtilization: Object.keys(orUtilization).length > 0 ? orUtilization : undefined,
     peakTimes: peakTimes.length > 0 ? peakTimes : undefined
   };
+  
+  if (blockScheduleEnabled && orBlocks && ors) {
+    // Calculate utilization for each OR
+    const orUtilizationSummary: Record<string, number> = {};
+    for (const orId in orUtilization) {
+      const slots = orUtilization[orId];
+      const usedSlots = slots.filter(s => s > 0).length;
+      orUtilizationSummary[orId] = usedSlots / slots.length;
+    }
+    
+    // Calculate overtime
+    let overtimeMinutes = 0;
+    const activeORs = ors.filter(or => orBlocks.some(block => block.orId === or.id));
+    for (const or of activeORs) {
+      const orCases = scheduledCases.filter(s => s.orRoom === or.id);
+      for (const surgeryCase of orCases) {
+        const dayOfSurgery = Math.floor(surgeryCase.scheduledStartTime / 1440);
+        const dayStartMinute = dayOfSurgery * 1440;
+        const surgeryEnd = surgeryCase.scheduledStartTime + surgeryCase.duration;
+        const dayCloseTime = dayStartMinute + or.closeTime;
+        
+        if (surgeryEnd > dayCloseTime) {
+          overtimeMinutes += (surgeryEnd - dayCloseTime);
+        }
+      }
+    }
+    
+    // Calculate total OR cost
+    const orCost = activeORs.reduce((total, or) => {
+      return total + (or.isExtra ? or.costPerDay : 0);
+    }, 0);
+    
+    // Add block scheduling results
+    results.blockSchedule = {
+      blocks: orBlocks,
+      orUtilization: orUtilizationSummary,
+      totalCost: orCost,
+      overtimeMinutes
+    };
+  }
+  
+  return results;
 }
 
 // Default patient classes
@@ -542,5 +913,13 @@ export const defaultSimulationParams: SimulationParams = {
   patientClassDistribution: defaultPatientDistribution,
   surgeryScheduleTemplate: defaultSurgerySchedule,
   simulationDays: 30,
-  surgeryScheduleType: 'template'
+  surgeryScheduleType: 'template',
+  blockScheduleEnabled: false,
+  ors: defaultORs.filter(or => !or.isExtra), // Include only non-extra ORs by default
+  orBlocks: generateDefaultBlockSchedule(defaultORs.filter(or => !or.isExtra), 1), // Generate blocks for first day only
+  optimizationWeights: {
+    peakOccupancy: 1.0,
+    overtime: 0.8,
+    extraORCost: 0.3
+  }
 };
