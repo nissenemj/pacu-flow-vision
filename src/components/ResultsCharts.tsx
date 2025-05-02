@@ -12,7 +12,9 @@ import {
   Legend,
   BarChart,
   Bar,
-  Cell
+  Cell,
+  AreaChart,
+  Area
 } from 'recharts';
 import { SimulationResults, PatientClass } from '@/lib/simulation';
 
@@ -39,11 +41,22 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
   const numPoints = Math.min(results.bedOccupancy.length, results.nurseUtilization.length);
   
   for (let i = 0; i < numPoints; i++) {
-    timeSeriesData.push({
+    const dataPoint: any = {
       time: `${Math.floor(i / 4)}:${(i % 4) * 15 === 0 ? '00' : (i % 4) * 15}`,
       bedOccupancy: Number((results.bedOccupancy[i] * 100).toFixed(1)),
       nurseUtilization: Number((results.nurseUtilization[i] * 100).toFixed(1))
-    });
+    };
+    
+    // Add OR utilization if available
+    if (results.orUtilization) {
+      Object.keys(results.orUtilization).forEach(orRoom => {
+        if (i < results.orUtilization![orRoom].length) {
+          dataPoint[`or_${orRoom}`] = results.orUtilization![orRoom][i] * 100;
+        }
+      });
+    }
+    
+    timeSeriesData.push(dataPoint);
   }
 
   // Create patient distribution data
@@ -75,6 +88,21 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
     count,
     percentage: Number((count / results.waitTimes.length * 100).toFixed(1))
   }));
+  
+  // Format peak occupancy data if available
+  const peakOccupancyData = results.peakTimes 
+    ? results.peakTimes.map(peak => {
+        const day = Math.floor(peak.time / 1440);
+        const dayMinutes = peak.time % 1440;
+        const hour = Math.floor(dayMinutes / 60);
+        const minute = dayMinutes % 60;
+        return {
+          time: peak.time,
+          formattedTime: `D${day+1} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+          occupancy: Math.round(peak.occupancy * 100)
+        };
+      })
+    : [];
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -234,6 +262,42 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
           </div>
         </CardContent>
       </Card>
+      
+      {results.peakTimes && results.peakTimes.length > 0 && (
+        <Card className="md:col-span-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Ruuhkahuiput (>80% vuodekäyttö)</CardTitle>
+          </CardHeader>
+          <CardContent className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={peakOccupancyData}
+                margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="formattedTime" 
+                  label={{ value: 'Aika', position: 'insideBottom', offset: -5 }}
+                />
+                <YAxis 
+                  domain={[75, 100]}
+                  label={{ value: 'Vuodekäyttö (%)', angle: -90, position: 'insideLeft' }}
+                />
+                <Tooltip 
+                  formatter={(value) => [`${value}%`, 'Vuodekäyttö']}
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="occupancy" 
+                  stroke="#ef4444" 
+                  fill="#ef4444" 
+                  fillOpacity={0.3}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 };

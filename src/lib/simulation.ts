@@ -1,4 +1,3 @@
-
 export interface PatientClass {
   id: string;
   name: string;
@@ -16,6 +15,16 @@ export interface SimulationParams {
   patientClassDistribution: Record<string, number>;
   surgeryScheduleTemplate: SurgerySchedule;
   simulationDays: number;
+  surgeryScheduleType: 'template' | 'custom';
+  customSurgeryList?: SurgeryCase[]; // Optional custom surgery list
+}
+
+export interface SurgeryCase {
+  id: string;
+  classId: string;  // References the patient class
+  orRoom: string;   // OR room identifier
+  scheduledStartTime: number;  // Minutes from simulation start
+  duration: number; // Expected duration in minutes
 }
 
 export interface SurgerySchedule {
@@ -32,6 +41,12 @@ export interface Patient {
   departureTime: number | null;
   waitTime: number | null;
   nurseCareTime: number | null;
+  surgeryData?: {   // Optional surgery details
+    orRoom: string;
+    scheduledStart: number;
+    actualStart?: number;
+    duration: number;
+  };
 }
 
 export interface SimulationResults {
@@ -46,6 +61,8 @@ export interface SimulationResults {
   maxNurseUtilization: number;
   meanNurseUtilization: number;
   patientTypeCount: Record<string, number>;
+  orUtilization?: Record<string, number[]>; // Added OR utilization tracking
+  peakTimes?: { time: number; occupancy: number }[]; // Peak occupancy times
 }
 
 // Generate random number from log-normal distribution
@@ -126,6 +143,73 @@ function getNextDischargeTime(timeInMinutes: number): number {
   return timeInMinutes; // Already in discharge hours
 }
 
+// New function to generate a custom surgery schedule
+export function generateCustomSurgeryList(
+  days: number,
+  orRooms: string[],
+  patientClasses: PatientClass[],
+  patientDistribution: Record<string, number>,
+  averageDailySurgeries: number
+): SurgeryCase[] {
+  const surgeries: SurgeryCase[] = [];
+  let caseId = 1;
+  
+  for (let day = 0; day < days; day++) {
+    // Generate slightly random number of surgeries for this day
+    const dailySurgeries = Math.round(
+      averageDailySurgeries * (0.9 + Math.random() * 0.2)
+    );
+    
+    // Distribute surgeries across OR rooms
+    for (let i = 0; i < dailySurgeries; i++) {
+      // Assign to a random OR
+      const orRoom = orRooms[Math.floor(Math.random() * orRooms.length)];
+      
+      // Determine patient class based on distribution
+      const rand = Math.random();
+      let cumulative = 0;
+      let selectedClassId = patientClasses[0].id;
+      
+      for (const [classId, probability] of Object.entries(patientDistribution)) {
+        cumulative += probability;
+        if (rand <= cumulative) {
+          selectedClassId = classId;
+          break;
+        }
+      }
+      
+      // Calculate surgery start time (between 8am-6pm)
+      // Morning bias: more surgeries in morning slots
+      let hourOffset;
+      const morningBias = Math.random() < 0.7; // 70% chance of morning slot
+      if (morningBias) {
+        hourOffset = 8 + Math.floor(Math.random() * 4); // 8am - 12pm
+      } else {
+        hourOffset = 12 + Math.floor(Math.random() * 6); // 12pm - 6pm
+      }
+      
+      const minuteOffset = Math.floor(Math.random() * 4) * 15; // 0, 15, 30, or 45 minutes
+      const startTime = day * 1440 + hourOffset * 60 + minuteOffset;
+      
+      // Generate surgery duration (60-240 minutes with heavier cases later in day)
+      const baseDuration = 60 + Math.floor(Math.random() * 120);
+      const complexity = morningBias ? 1.0 : 1.2; // Later surgeries are slightly more complex
+      const duration = Math.round(baseDuration * complexity);
+      
+      surgeries.push({
+        id: `case-${caseId++}`,
+        classId: selectedClassId,
+        orRoom,
+        scheduledStartTime: startTime,
+        duration
+      });
+    }
+  }
+  
+  // Sort by scheduled start time
+  return surgeries.sort((a, b) => a.scheduledStartTime - b.scheduledStartTime);
+}
+
 export function runSimulation(params: SimulationParams): SimulationResults {
   const { 
     beds, 
@@ -134,7 +218,9 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     patientClasses, 
     patientClassDistribution,
     surgeryScheduleTemplate,
-    simulationDays
+    simulationDays,
+    surgeryScheduleType,
+    customSurgeryList
   } = params;
 
   // Time tracking in minutes
@@ -148,7 +234,10 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   const patients: Patient[] = [];
   const waitTimes: number[] = [];
   const patientTypeCount: Record<string, number> = {};
-
+  
+  // Track OR utilization if using custom surgery list
+  const orUtilization: Record<string, number[]> = {};
+  
   // Initialize patient type counts
   patientClasses.forEach(pc => {
     patientTypeCount[pc.id] = 0;
@@ -167,9 +256,35 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   
   // Generate all surgery finish times (PACU arrivals)
   const allArrivals: number[] = [];
-  for (let day = 0; day < simulationDays; day++) {
-    const dailyArrivals = generateDailySurgeryFinishTimes(day, surgeryScheduleTemplate);
-    allArrivals.push(...dailyArrivals);
+  
+  // Use custom surgery list or generate from template
+  if (surgeryScheduleType === 'custom' && customSurgeryList && customSurgeryList.length > 0) {
+    // Initialize OR tracking
+    const orRooms = [...new Set(customSurgeryList.map(s => s.orRoom))];
+    orRooms.forEach(room => {
+      orUtilization[room] = new Array(timePoints).fill(0);
+    });
+    
+    // Generate from custom list
+    customSurgeryList.forEach((surgery) => {
+      // Surgery finish time = start + duration
+      const finishTime = surgery.scheduledStartTime + surgery.duration;
+      allArrivals.push(finishTime);
+      
+      // Track OR utilization
+      const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
+      const endSlot = Math.floor(finishTime / timeIncrement);
+      
+      for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
+        orUtilization[surgery.orRoom][slot] = 1;
+      }
+    });
+  } else {
+    // Use template-based generation
+    for (let day = 0; day < simulationDays; day++) {
+      const dailyArrivals = generateDailySurgeryFinishTimes(day, surgeryScheduleTemplate);
+      allArrivals.push(...dailyArrivals);
+    }
   }
 
   allArrivals.sort((a, b) => a - b);
@@ -181,6 +296,40 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     let cumulative = 0;
     let selectedClassId = patientClasses[0].id;
     
+    // If using custom list, get the patient class from the list
+    if (surgeryScheduleType === 'custom' && customSurgeryList) {
+      const surgeryCase = customSurgeryList.find(s => 
+        s.scheduledStartTime + s.duration === arrivalTime
+      );
+      if (surgeryCase) {
+        selectedClassId = surgeryCase.classId;
+        
+        // Create a patient with surgery data
+        patientTypeCount[selectedClassId]++;
+        const patientClass = patientClasses.find(pc => pc.id === selectedClassId)!;
+        const stayDuration = Math.max(30, Math.round(
+          logNormalRandom(patientClass.meanStayMinutes, patientClass.stdDevMinutes)
+        ));
+        
+        return {
+          id: patientId++,
+          classId: selectedClassId,
+          arrivalTime,
+          stayDuration,
+          careStartTime: null,
+          departureTime: null,
+          waitTime: null,
+          nurseCareTime: null,
+          surgeryData: {
+            orRoom: surgeryCase.orRoom,
+            scheduledStart: surgeryCase.scheduledStartTime,
+            duration: surgeryCase.duration
+          }
+        };
+      }
+    }
+    
+    // Otherwise use the distribution
     for (const [classId, probability] of Object.entries(patientClassDistribution)) {
       cumulative += probability;
       if (rand <= cumulative) {
@@ -208,6 +357,9 @@ export function runSimulation(params: SimulationParams): SimulationResults {
       nurseCareTime: null
     };
   });
+
+  // Track peak occupancy times
+  const peakTimes: { time: number; occupancy: number }[] = [];
 
   // Process each time step
   for (let t = 0; t < totalMinutes; t += timeIncrement) {
@@ -280,8 +432,17 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     // Record metrics at this time point
     const timeIndex = Math.floor(t / timeIncrement);
     if (timeIndex < bedOccupancy.length) {
-      bedOccupancy[timeIndex] = occupiedBeds / beds;
+      const currentBedOccupancy = occupiedBeds / beds;
+      bedOccupancy[timeIndex] = currentBedOccupancy;
       nurseUtilization[timeIndex] = Math.min(1, assignedNurses / nurses);
+      
+      // Track peak times when occupancy is higher than 80%
+      if (currentBedOccupancy > 0.8) {
+        peakTimes.push({
+          time: t,
+          occupancy: currentBedOccupancy
+        });
+      }
     }
   }
 
@@ -311,7 +472,9 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     meanBedOccupancy,
     maxNurseUtilization,
     meanNurseUtilization,
-    patientTypeCount
+    patientTypeCount,
+    orUtilization: Object.keys(orUtilization).length > 0 ? orUtilization : undefined,
+    peakTimes: peakTimes.length > 0 ? peakTimes : undefined
   };
 }
 
@@ -351,6 +514,9 @@ export const defaultPatientClasses: PatientClass[] = [
   }
 ];
 
+// Default OR rooms
+export const defaultOrRooms: string[] = ["OR-1", "OR-2", "OR-3", "OR-4", "OR-5", "OR-6"];
+
 // Default distribution of patient classes
 export const defaultPatientDistribution: Record<string, number> = {
   "A": 0.30,
@@ -375,5 +541,6 @@ export const defaultSimulationParams: SimulationParams = {
   patientClasses: defaultPatientClasses,
   patientClassDistribution: defaultPatientDistribution,
   surgeryScheduleTemplate: defaultSurgerySchedule,
-  simulationDays: 30
+  simulationDays: 30,
+  surgeryScheduleType: 'template'
 };

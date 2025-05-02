@@ -4,11 +4,13 @@ import {
   defaultSimulationParams, 
   runSimulation, 
   SimulationResults, 
-  SimulationParams 
+  SimulationParams,
+  SurgeryCase
 } from '@/lib/simulation';
 import { toast } from '@/components/ui/use-toast';
 import SimulationParameters from './SimulationParameters';
 import ResultsCharts from './ResultsCharts';
+import ORScheduleChart from './ORScheduleChart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -18,6 +20,7 @@ const SimulationDashboard: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [savedScenarios, setSavedScenarios] = useState<{name: string, params: SimulationParams, results: SimulationResults | null}[]>([]);
   const [activeTab, setActiveTab] = useState("simulator");
+  const [resultTab, setResultTab] = useState("metrics");
 
   const handleParamChange = useCallback((key: string, value: any) => {
     setParams((prev) => {
@@ -87,6 +90,7 @@ const SimulationDashboard: React.FC = () => {
           title: "Simulaatio valmis",
           description: `${params.simulationDays} päivän simulaatio suoritettu onnistuneesti.`
         });
+        setResultTab("metrics"); // Switch to metrics tab after simulation
       } catch (error) {
         console.error("Simulation error:", error);
         toast({
@@ -172,8 +176,36 @@ const SimulationDashboard: React.FC = () => {
                 </p>
               </CardContent>
             </Card>
+          ) : results ? (
+            <div className="space-y-4">
+              <Tabs value={resultTab} onValueChange={setResultTab}>
+                <TabsList>
+                  <TabsTrigger value="metrics">Tulokset</TabsTrigger>
+                  {params.surgeryScheduleType === 'custom' && params.customSurgeryList && (
+                    <TabsTrigger value="schedule">Leikkausaikataulu</TabsTrigger>
+                  )}
+                </TabsList>
+                
+                <TabsContent value="metrics" className="pt-4">
+                  <ResultsCharts results={results} patientClasses={params.patientClasses} />
+                </TabsContent>
+                
+                <TabsContent value="schedule" className="pt-4">
+                  <ORScheduleChart 
+                    surgeryList={params.customSurgeryList || []} 
+                    patientClasses={params.patientClasses}
+                  />
+                </TabsContent>
+              </Tabs>
+            </div>
           ) : (
-            <ResultsCharts results={results} patientClasses={params.patientClasses} />
+            <Card className="h-[350px] flex items-center justify-center">
+              <CardContent>
+                <p className="text-center text-muted-foreground">
+                  Aja simulaatio nähdäksesi tulokset
+                </p>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
         
@@ -244,6 +276,16 @@ const SimulationDashboard: React.FC = () => {
               <div className="space-y-2">
                 <h3 className="font-semibold">Simulaation tarkoitus</h3>
                 <p>Tämän sovelluksen avulla voit mallintaa heräämön (PACU) toimintaa ja resurssitarpeita erilaisilla potilasmäärillä ja -tyypeillä. Simulaatio käyttää diskreettiä tapahtumasimulointia (DES) mallintaakseen potilasvirtaa.</p>
+              </div>
+              
+              <div className="space-y-2">
+                <h3 className="font-semibold">Leikkauslistan kytkeminen</h3>
+                <p>Voit kytkeä PACU-kuormitussimulointiin konkreettisen leikkauslistan:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Luo automaattisesti generoitu leikkauslista "Leikkauslista"-välilehdeltä</li>
+                  <li>Lataa CSV-tiedosto joka sisältää tiedot leikkauksista</li>
+                  <li>Tutki miten eri leikkausaikataulut vaikuttavat PACU:n kuormitukseen</li>
+                </ul>
               </div>
               
               <div className="space-y-2">
