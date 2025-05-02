@@ -266,7 +266,7 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
       {results.peakTimes && results.peakTimes.length > 0 && (
         <Card className="md:col-span-2">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Ruuhkahuiput (>80% vuodekäyttö)</CardTitle>
+            <CardTitle className="text-lg">Ruuhkahuiput ({`>`}80% vuodekäyttö)</CardTitle>
           </CardHeader>
           <CardContent className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
