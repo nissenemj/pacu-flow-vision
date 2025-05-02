@@ -4,7 +4,8 @@ import {
   runSimulation, 
   SimulationResults, 
   SimulationParams,
-  SurgeryCase
+  SurgeryCase,
+  ORBlock
 } from '@/lib/simulation';
 import { toast } from '@/components/ui/use-toast';
 import SimulationParameters from './SimulationParameters';
@@ -13,12 +14,8 @@ import ORScheduleChart from './ORScheduleChart';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-// Add the OR block types
-interface Block {
-  id: string;
-  orId: string;
-  start: number;
-  end: number;
+// Update the Block interface to match ORBlock
+interface Block extends ORBlock {
   label: string;
   allowedProcedures: string[];
 }
@@ -146,7 +143,21 @@ const SimulationDashboard: React.FC = () => {
 
   const loadScenario = useCallback((index: number) => {
     const scenario = savedScenarios[index];
-    setParams({...scenario.params});
+    
+    // Convert ORBlocks to Blocks if necessary
+    const scenarioParams = {...scenario.params};
+    if (scenarioParams.orBlocks) {
+      scenarioParams.orBlocks = scenarioParams.orBlocks.map(block => {
+        // Ensure block has all required properties of Block interface
+        return {
+          ...block,
+          label: block.label || `Block ${block.id}`,
+          allowedProcedures: block.allowedProcedures || block.allowedClasses || []
+        };
+      });
+    }
+    
+    setParams(scenarioParams as SimulationParams & { orBlocks?: Block[] });
     setResults(scenario.results);
     setActiveTab("simulator");
     

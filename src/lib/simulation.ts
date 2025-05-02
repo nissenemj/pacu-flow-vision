@@ -231,6 +231,8 @@ export interface ORBlock {
   end: number;   // Minutes from day start
   allowedClasses: string[]; // IDs of patient classes allowed in this block
   day: number;   // Day index in simulation
+  label?: string; // Added for compatibility with Block interface in SimulationDashboard
+  allowedProcedures?: string[]; // Added for compatibility with Block interface in SimulationDashboard
 }
 
 export interface OR {
@@ -502,7 +504,10 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   const activePacuPatients: Patient[] = [];
   
   // Generate all surgery finish times (PACU arrivals)
-  const allArrivals: number[] = [];
+  let allArrivals: number[] = [];
+  
+  // Variable to store scheduled cases if using block scheduling
+  let blockScheduledCases: SurgeryCase[] = [];
   
   // Use custom surgery list or generate from template
   if (blockScheduleEnabled && orBlocks && orBlocks.length > 0) {
@@ -516,7 +521,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     const averageDaily = surgeryScheduleTemplate.averageDailySurgeries;
     const totalSurgeries = Math.round(averageDaily * simulationDays);
     
-    const scheduledCases = scheduleCasesInBlocks(
+    blockScheduledCases = scheduleCasesInBlocks(
       patientClasses, 
       orBlocks, 
       simulationDays,
@@ -524,18 +529,18 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     );
     
     // Calculate surgery finish times from scheduled cases
-    allArrivals = scheduledCases.map(surgery => {
+    allArrivals = blockScheduledCases.map(surgery => {
       // Surgery finish time = start + duration
       return surgery.scheduledStartTime + surgery.duration;
     });
     
     // Calculate OR utilization
-    const orIds = [...new Set(scheduledCases.map(s => s.orRoom))];
+    const orIds = [...new Set(blockScheduledCases.map(s => s.orRoom))];
     orIds.forEach(orId => {
       orUtilization[orId] = new Array(timePoints).fill(0);
       
       // Mark time slots where OR is in use
-      scheduledCases.forEach(surgery => {
+      blockScheduledCases.forEach(surgery => {
         if (surgery.orRoom === orId) {
           const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
           const endSlot = Math.floor((surgery.scheduledStartTime + surgery.duration) / timeIncrement);
@@ -550,7 +555,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     // Calculate overtime (time used outside regular hours)
     let overtimeMinutes = 0;
     for (const or of activeORs) {
-      const orCases = scheduledCases.filter(s => s.orRoom === or.id);
+      const orCases = blockScheduledCases.filter(s => s.orRoom === or.id);
       for (const surgeryCase of orCases) {
         const dayOfSurgery = Math.floor(surgeryCase.scheduledStartTime / 1440);
         const dayStartMinute = dayOfSurgery * 1440;
@@ -624,10 +629,10 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     
     // If using custom list or block schedule, get the patient class from the case
     if ((surgeryScheduleType === 'custom' && customSurgeryList) || 
-        (blockScheduleEnabled && scheduledCases.length > 0)) {
+        (blockScheduleEnabled && blockScheduledCases.length > 0)) {
       
       const surgeryCase = blockScheduleEnabled 
-        ? scheduledCases.find(s => s.scheduledStartTime + s.duration === arrivalTime)
+        ? blockScheduledCases.find(s => s.scheduledStartTime + s.duration === arrivalTime)
         : customSurgeryList?.find(s => s.scheduledStartTime + s.duration === arrivalTime);
         
       if (surgeryCase) {
@@ -819,7 +824,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     let overtimeMinutes = 0;
     const activeORs = ors.filter(or => orBlocks.some(block => block.orId === or.id));
     for (const or of activeORs) {
-      const orCases = scheduledCases.filter(s => s.orRoom === or.id);
+      const orCases = blockScheduledCases.filter(s => s.orRoom === or.id);
       for (const surgeryCase of orCases) {
         const dayOfSurgery = Math.floor(surgeryCase.scheduledStartTime / 1440);
         const dayStartMinute = dayOfSurgery * 1440;
