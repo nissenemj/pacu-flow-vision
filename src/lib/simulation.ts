@@ -863,8 +863,8 @@ export function runSimulation(params: SimulationParams): SimulationResults {
 
   // Queues for different phases
   const arrivalQueue: Patient[] = []; // Queue for initial arrival
-  const phase1Queue: Patient[] = [];  // Queue for Phase I
-  const phase2Queue: Patient[] = [];  // Queue for Phase II
+  const phase1Queue: Patient[] =  [];  // Queue for Phase I
+  const phase2Queue: Patient[] =  [];  // Queue for Phase II
   
   // Transfer delay tracking
   let transferDelayCount = 0;
@@ -1314,3 +1314,6 @@ export function runSimulation(params: SimulationParams): SimulationResults {
 
   return results;
 }
+
+// Define defaultOrRooms for use in SurgeryScheduler
+export const defaultOrRooms: string[] = ["OR-1", "OR-2", "OR-3"];

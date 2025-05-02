@@ -1,9 +1,8 @@
-
 import React from 'react';
 import Header from '@/components/Header';
 import SimulationDashboard from '@/components/SimulationDashboard';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertCircle, Chart, Bed, Clock, Users } from "lucide-react";
+import { AlertCircle, Car, Bed, Clock, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const Index: React.FC = () => {
@@ -55,7 +54,7 @@ const Index: React.FC = () => {
               <Card>
                 <CardHeader className="pb-2">
                   <div className="flex items-center gap-2">
-                    <Chart className="h-5 w-5 text-green-500" />
+                    <Car className="h-5 w-5 text-green-500" />
                     <CardTitle className="text-lg">Prosessityypit</CardTitle>
                   </div>
                   <CardDescription>
