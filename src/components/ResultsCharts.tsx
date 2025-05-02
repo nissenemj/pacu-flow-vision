@@ -38,20 +38,23 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
 
   // Transform data for time-based charts
   const timeSeriesData = [];
-  const numPoints = Math.min(results.bedOccupancy.length, results.nurseUtilization.length);
+  const numPoints = Math.min(
+    results.bedOccupancy?.length || 0, 
+    results.nurseUtilization?.length || 0
+  );
   
   for (let i = 0; i < numPoints; i++) {
     const dataPoint: any = {
       time: `${Math.floor(i / 4)}:${(i % 4) * 15 === 0 ? '00' : (i % 4) * 15}`,
-      bedOccupancy: Number((results.bedOccupancy[i] * 100).toFixed(1)),
-      nurseUtilization: Number((results.nurseUtilization[i] * 100).toFixed(1))
+      bedOccupancy: Number(((results.bedOccupancy?.[i] || 0) * 100).toFixed(1)),
+      nurseUtilization: Number(((results.nurseUtilization?.[i] || 0) * 100).toFixed(1))
     };
     
     // Add OR utilization if available
     if (results.orUtilization) {
       Object.keys(results.orUtilization).forEach(orRoom => {
-        if (i < results.orUtilization![orRoom].length) {
-          dataPoint[`or_${orRoom}`] = results.orUtilization![orRoom][i] * 100;
+        if (i < (results.orUtilization?.[orRoom]?.length || 0)) {
+          dataPoint[`or_${orRoom}`] = (results.orUtilization?.[orRoom]?.[i] || 0) * 100;
         }
       });
     }
@@ -62,7 +65,7 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
   // Create patient distribution data
   const patientDistributionData = patientClasses.map(pc => ({
     name: pc.name,
-    count: results.patientTypeCount[pc.id] || 0,
+    count: results.patientTypeCount?.[pc.id] || 0,
     fill: pc.color
   }));
   
@@ -75,7 +78,9 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
     '2+ h': 0
   };
   
-  results.waitTimes.forEach(waitTime => {
+  // Use waitingTimes instead of waitTimes and add null check
+  const waitingTimes = results.waitingTimes || [];
+  waitingTimes.forEach(waitTime => {
     if (waitTime < 15) waitTimeBuckets['0-15 min']++;
     else if (waitTime < 30) waitTimeBuckets['15-30 min']++;
     else if (waitTime < 60) waitTimeBuckets['30-60 min']++;
@@ -86,7 +91,7 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
   const waitTimeData = Object.entries(waitTimeBuckets).map(([range, count]) => ({
     range,
     count,
-    percentage: Number((count / results.waitTimes.length * 100).toFixed(1))
+    percentage: Number((count / (waitingTimes.length || 1) * 100).toFixed(1))
   }));
   
   // Format peak occupancy data if available
@@ -225,37 +230,37 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }
               <div className="p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">Keskimääräinen odotusaika</p>
                 <p className="text-2xl font-semibold text-medical-blue">
-                  {Math.round(results.meanWaitTime)} min
+                  {Math.round(results.meanWaitTime || 0)} min
                 </p>
               </div>
               <div className="p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">P95 odotusaika</p>
                 <p className="text-2xl font-semibold text-medical-blue">
-                  {Math.round(results.p95WaitTime)} min
+                  {Math.round(results.p95WaitTime || 0)} min
                 </p>
               </div>
               <div className="p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">Keskimääräinen vuodekäyttö</p>
                 <p className="text-2xl font-semibold text-medical-teal">
-                  {Math.round(results.meanBedOccupancy * 100)}%
+                  {Math.round((results.meanBedOccupancy || 0) * 100)}%
                 </p>
               </div>
               <div className="p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">Maksimi vuodekäyttö</p>
                 <p className="text-2xl font-semibold text-medical-teal">
-                  {Math.round(results.maxBedOccupancy * 100)}%
+                  {Math.round((results.maxBedOccupancy || 0) * 100)}%
                 </p>
               </div>
               <div className="p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">Keskimääräinen hoitajakäyttö</p>
                 <p className="text-2xl font-semibold text-medical-green">
-                  {Math.round(results.meanNurseUtilization * 100)}%
+                  {Math.round((results.meanNurseUtilization || 0) * 100)}%
                 </p>
               </div>
               <div className="p-3 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">Maksimi hoitajakäyttö</p>
                 <p className="text-2xl font-semibold text-medical-green">
-                  {Math.round(results.maxNurseUtilization * 100)}%
+                  {Math.round((results.maxNurseUtilization || 0) * 100)}%
                 </p>
               </div>
             </div>
