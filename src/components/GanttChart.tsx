@@ -29,7 +29,7 @@ interface GanttBarData {
   duration: number;
   day: number;
   color: string;
-  type: 'surgery' | 'pacu';
+  type: 'surgery' | 'pacu' | 'outpatient' | 'direct-transfer';
   label: string;
   className: string;
   classId: string;
@@ -61,6 +61,7 @@ const GanttChart: React.FC<GanttChartProps> = ({
     const patientClass = patientClasses.find(pc => pc.id === surgery.classId);
     const color = patientClass?.color || "#999999";
     const name = patientClass?.name || surgery.classId;
+    const processType = patientClass?.processType || 'standard';
     
     // Add surgery operation
     ganttData.push({
@@ -77,10 +78,10 @@ const GanttChart: React.FC<GanttChartProps> = ({
       classId: surgery.classId
     });
     
-    // Add PACU recovery if showPacu is true
-    if (showPacu) {
+    // Add PACU recovery if showPacu is true and it's not an outpatient or direct transfer
+    if (showPacu && processType === 'standard') {
       const pacuStart = surgery.scheduledStartTime + surgery.duration;
-      const pacuDuration = patientClass?.averagePacuTime || 120; // Default to 2 hours if not specified
+      const pacuDuration = patientClass?.averagePacuTime || 120; // Use the new property
       
       ganttData.push({
         id: `pacu_${surgery.id}`,
@@ -95,16 +96,52 @@ const GanttChart: React.FC<GanttChartProps> = ({
         className: name,
         classId: surgery.classId
       });
+    } 
+    else if (showPacu && processType === 'outpatient') {
+      // Add indicator for outpatient process
+      ganttData.push({
+        id: `outpatient_${surgery.id}`,
+        resource: 'Outpatient',
+        start: surgery.scheduledStartTime + surgery.duration,
+        end: surgery.scheduledStartTime + surgery.duration + 15, // Short duration to show as a marker
+        duration: 15,
+        day,
+        color: color,
+        type: 'outpatient',
+        label: `Polikliininen (${name})`,
+        className: name,
+        classId: surgery.classId
+      });
+    }
+    else if (showPacu && processType === 'directTransfer') {
+      // Add indicator for direct transfer
+      ganttData.push({
+        id: `transfer_${surgery.id}`,
+        resource: 'Direct Transfer',
+        start: surgery.scheduledStartTime + surgery.duration,
+        end: surgery.scheduledStartTime + surgery.duration + 15, // Short duration to show as a marker
+        duration: 15,
+        day,
+        color: color,
+        type: 'direct-transfer',
+        label: `Suora siirto (${name})`,
+        className: name,
+        classId: surgery.classId
+      });
     }
   });
   
   // Group by day
   const days = [...new Set(ganttData.map(d => d.day))].sort((a, b) => a - b);
   
-  // Group by resource (OR rooms and PACU)
+  // Group by resource (OR rooms, PACU, and new process types)
   const resources = [...new Set(ganttData.map(d => d.resource))].sort((a, b) => {
     if (a === 'PACU') return 1;
+    if (a === 'Outpatient') return 2;
+    if (a === 'Direct Transfer') return 3;
     if (b === 'PACU') return -1;
+    if (b === 'Outpatient') return -2;
+    if (b === 'Direct Transfer') return -3;
     return a.localeCompare(b);
   });
   
@@ -200,20 +237,61 @@ const GanttChart: React.FC<GanttChartProps> = ({
                     // Calculate the real x position
                     const barX = x + (normalizedStart * width) - (barWidth / 2);
                     
-                    return (
-                      <rect
-                        x={barX}
-                        y={y}
-                        width={barWidth}
-                        height={height}
-                        fill={payload.color}
-                        fillOpacity={payload.type === 'pacu' ? 0.7 : 0.9}
-                        stroke="#fff"
-                        strokeWidth={1}
-                        rx={4}
-                        ry={4}
-                      />
-                    );
+                    // Use different shapes for different process types
+                    if (payload.type === 'outpatient') {
+                      // Diamond shape for outpatient
+                      const centerX = barX + barWidth / 2;
+                      const centerY = y + height / 2;
+                      const size = height * 0.8;
+                      
+                      return (
+                        <polygon 
+                          points={`
+                            ${centerX},${centerY - size/2} 
+                            ${centerX + size/2},${centerY} 
+                            ${centerX},${centerY + size/2} 
+                            ${centerX - size/2},${centerY}
+                          `}
+                          fill={payload.color}
+                          stroke="#fff"
+                          strokeWidth={1}
+                        />
+                      );
+                    } else if (payload.type === 'direct-transfer') {
+                      // Triangle shape for direct transfer
+                      const centerX = barX + barWidth / 2;
+                      const centerY = y + height / 2;
+                      const size = height * 0.8;
+                      
+                      return (
+                        <polygon 
+                          points={`
+                            ${centerX},${centerY - size/2} 
+                            ${centerX + size/2},${centerY + size/2} 
+                            ${centerX - size/2},${centerY + size/2}
+                          `}
+                          fill={payload.color}
+                          stroke="#fff"
+                          strokeWidth={1}
+                        />
+                      );
+                    } else {
+                      // Regular rectangle for surgery and PACU
+                      return (
+                        <rect
+                          x={barX}
+                          y={y}
+                          width={barWidth}
+                          height={height}
+                          fill={payload.color}
+                          fillOpacity={payload.type === 'pacu' ? 0.7 : 0.9}
+                          stroke="#fff"
+                          strokeWidth={1}
+                          rx={4}
+                          ry={4}
+                        />
+                      );
+                    }
                   }}
                 >
                   {dayItem.data.map((entry, index) => (

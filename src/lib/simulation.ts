@@ -5,6 +5,8 @@ export interface PatientClass {
   meanStayMinutes: number;
   stdDevMinutes: number;
   isOvernight: boolean;
+  averagePacuTime: number; // Add this property for PACU time calculation
+  processType?: 'standard' | 'outpatient' | 'directTransfer'; // New property for process types
 }
 
 export interface SimulationParams {
@@ -21,9 +23,10 @@ export interface SimulationParams {
   orBlocks?: ORBlock[];
   ors?: OR[];
   optimizationWeights?: {
-    peakOccupancy: number;
-    overtime: number;
-    extraORCost: number;
+    peakOccupancy: number;  // α - weight for peak occupancy optimization
+    overtime: number;       // β - weight for overtime minimization
+    extraORCost: number;    // γ - weight for extra OR costs
+    emergencyBuffer?: number; // Buffer time for emergency cases
   };
 }
 
@@ -664,6 +667,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
           surgeryData: {
             orRoom: surgeryCase.orRoom,
             scheduledStart: surgeryCase.scheduledStartTime,
+            actualStart?: surgeryCase.scheduledStartTime,
             duration: surgeryCase.duration
           }
         };
@@ -869,7 +873,9 @@ export const defaultPatientClasses: PatientClass[] = [
     color: "#0ea5e9", // blue
     meanStayMinutes: 90,
     stdDevMinutes: 25,
-    isOvernight: false
+    isOvernight: false,
+    averagePacuTime: 90,
+    processType: 'standard'
   },
   {
     id: "B",
@@ -877,7 +883,9 @@ export const defaultPatientClasses: PatientClass[] = [
     color: "#22c55e", // green
     meanStayMinutes: 480, // 8 hours
     stdDevMinutes: 60,
-    isOvernight: true
+    isOvernight: true,
+    averagePacuTime: 480,
+    processType: 'standard'
   },
   {
     id: "C",
@@ -885,7 +893,9 @@ export const defaultPatientClasses: PatientClass[] = [
     color: "#eab308", // yellow
     meanStayMinutes: 540, // 9 hours
     stdDevMinutes: 90,
-    isOvernight: true
+    isOvernight: true,
+    averagePacuTime: 540,
+    processType: 'standard'
   },
   {
     id: "D",
@@ -893,7 +903,29 @@ export const defaultPatientClasses: PatientClass[] = [
     color: "#ef4444", // red
     meanStayMinutes: 150,
     stdDevMinutes: 30,
-    isOvernight: false
+    isOvernight: false,
+    averagePacuTime: 150,
+    processType: 'standard'
+  },
+  {
+    id: "E",
+    name: "Polikliininen (ei heräämöä)",
+    color: "#8b5cf6", // purple
+    meanStayMinutes: 0, // No PACU stay
+    stdDevMinutes: 0,
+    isOvernight: false,
+    averagePacuTime: 0,
+    processType: 'outpatient'
+  },
+  {
+    id: "F",
+    name: "Suora siirto osastolle/teho",
+    color: "#ec4899", // pink
+    meanStayMinutes: 0, // No PACU stay
+    stdDevMinutes: 0,
+    isOvernight: false,
+    averagePacuTime: 0,
+    processType: 'directTransfer'
   }
 ];
 
@@ -902,10 +934,12 @@ export const defaultOrRooms: string[] = ["OR-1", "OR-2", "OR-3", "OR-4", "OR-5",
 
 // Default distribution of patient classes
 export const defaultPatientDistribution: Record<string, number> = {
-  "A": 0.30,
-  "B": 0.20,
+  "A": 0.25,
+  "B": 0.15,
   "C": 0.15,
-  "D": 0.35
+  "D": 0.25,
+  "E": 0.10,
+  "F": 0.10
 };
 
 // Default surgery schedule
