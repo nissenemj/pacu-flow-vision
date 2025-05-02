@@ -33,6 +33,19 @@ export interface SpecialEquipment {
   useTimeMinutes: number; // How long the equipment is used per patient
 }
 
+export interface SurgeryCase {
+  id: string;
+  classId: string;  // References the patient class
+  orRoom: string;   // OR room identifier
+  scheduledStartTime: number;  // Minutes from simulation start
+  duration: number; // Expected duration in minutes
+}
+
+export interface SurgerySchedule {
+  averageDailySurgeries: number;
+  hourlyDistribution: number[];
+}
+
 // Extended to include phases and more details
 export interface SimulationParams {
   beds: number;
@@ -554,7 +567,8 @@ function getAvailableNurses(
 function isEquipmentAvailable(
   equipmentId: string,
   time: number,
-  equipmentUse: Record<string, { inUse: number; endTimes: number[] }>
+  equipmentUse: Record<string, { inUse: number; endTimes: number[] }>,
+  specialEquipment: SpecialEquipment[]
 ): boolean {
   if (!equipmentUse[equipmentId]) {
     return true; // If not tracked yet, it's available
@@ -855,15 +869,4 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     } else {
       // Use template-based generation
       for (let day = 0; day < simulationDays; day++) {
-        const dailyArrivals = generateDailySurgeryFinishTimes(day, surgeryScheduleTemplate);
-        allArrivals.push(...dailyArrivals);
-      }
-    }
-
-    allArrivals.sort((a, b) => a - b);
-  }
-  
-  // Generate patients with their arrival times
-  const allPatients: Patient[] = allArrivals.map((arrivalTime, index) => {
-    // Determine patient class based on distribution
-    const rand = Math.random();
+        const dailyArrivals = generateDailySurgeryFinishTimes
