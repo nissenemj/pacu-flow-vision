@@ -5,26 +5,42 @@ import {
   SimulationResults, 
   SimulationParams,
   SurgeryCase,
-  ORBlock
+  ORBlock,
+  PatientClass
 } from '@/lib/simulation';
 import { toast } from '@/components/ui/use-toast';
 import SimulationParameters from './SimulationParameters';
 import ResultsCharts from './ResultsCharts';
 import ORScheduleChart from './ORScheduleChart';
+import BlockScheduler from './BlockScheduler';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
-// Update the Block interface to match ORBlock
+// Block interface that extends ORBlock for UI components
 interface Block extends ORBlock {
   label: string;
   allowedProcedures: string[];
 }
 
+// Convert Block to ORBlock for simulation
+const convertBlockToORBlock = (block: Block): ORBlock => {
+  return {
+    id: block.id,
+    orId: block.orId,
+    start: block.start,
+    end: block.end,
+    allowedClasses: block.allowedProcedures, // Use allowedProcedures for compatibility
+    day: block.day,
+    label: block.label,
+    allowedProcedures: block.allowedProcedures
+  };
+};
+
 const SimulationDashboard: React.FC = () => {
   // Update params to include blocks
-  const [params, setParams] = useState<SimulationParams & { orBlocks?: Block[] }>({
+  const [params, setParams] = useState<SimulationParams>({
     ...defaultSimulationParams,
-    orBlocks: []
   });
   
   const [results, setResults] = useState<SimulationResults | null>(null);
@@ -32,6 +48,7 @@ const SimulationDashboard: React.FC = () => {
   const [savedScenarios, setSavedScenarios] = useState<{name: string, params: SimulationParams, results: SimulationResults | null}[]>([]);
   const [activeTab, setActiveTab] = useState("simulator");
   const [resultTab, setResultTab] = useState("metrics");
+  const [activeConfigTab, setActiveConfigTab] = useState("parameters");
 
   const handleParamChange = useCallback((key: string, value: any) => {
     setParams((prev) => {
@@ -90,14 +107,26 @@ const SimulationDashboard: React.FC = () => {
     });
   }, []);
 
+  // Handle block schedule changes
+  const handleBlockScheduleChange = useCallback((blocks: Block[]) => {
+    setParams(prev => {
+      // Convert Block[] to ORBlock[] for the simulation
+      const orBlocks: ORBlock[] = blocks.map(convertBlockToORBlock);
+      
+      return {
+        ...prev,
+        blockScheduleEnabled: true,
+        orBlocks: orBlocks
+      };
+    });
+  }, []);
+
   const runSimulationHandler = useCallback(() => {
     setIsRunning(true);
     // Use setTimeout to allow UI to update before running simulation
     setTimeout(() => {
       try {
-        // If we have blocks defined, we would generate a surgeryList from the blocks here
-        // For now, we'll just use the existing simulation
-        
+        // Run simulation with current parameters
         const simulationResults = runSimulation(params);
         setResults(simulationResults);
         toast({
@@ -143,21 +172,7 @@ const SimulationDashboard: React.FC = () => {
 
   const loadScenario = useCallback((index: number) => {
     const scenario = savedScenarios[index];
-    
-    // Convert ORBlocks to Blocks if necessary
-    const scenarioParams = {...scenario.params};
-    if (scenarioParams.orBlocks) {
-      scenarioParams.orBlocks = scenarioParams.orBlocks.map(block => {
-        // Ensure block has all required properties of Block interface
-        return {
-          ...block,
-          label: block.label || `Block ${block.id}`,
-          allowedProcedures: block.allowedProcedures || block.allowedClasses || []
-        };
-      });
-    }
-    
-    setParams(scenarioParams as SimulationParams & { orBlocks?: Block[] });
+    setParams(scenario.params);
     setResults(scenario.results);
     setActiveTab("simulator");
     
@@ -188,13 +203,40 @@ const SimulationDashboard: React.FC = () => {
         </div>
         
         <TabsContent value="simulator" className="space-y-6">
-          <SimulationParameters
-            params={params}
-            onParamChange={handleParamChange}
-            onPatientDistributionChange={handlePatientDistributionChange}
-            onRunSimulation={runSimulationHandler}
-            isRunning={isRunning}
-          />
+          {/* Configuration tabs */}
+          <Tabs value={activeConfigTab} onValueChange={setActiveConfigTab}>
+            <TabsList>
+              <TabsTrigger value="parameters">Parametrit</TabsTrigger>
+              <TabsTrigger value="or-blocks">Salisuunnittelu</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="parameters" className="pt-4">
+              <SimulationParameters
+                params={params}
+                onParamChange={handleParamChange}
+                onPatientDistributionChange={handlePatientDistributionChange}
+                onRunSimulation={runSimulationHandler}
+                isRunning={isRunning}
+              />
+            </TabsContent>
+            
+            <TabsContent value="or-blocks" className="pt-4">
+              <BlockScheduler 
+                patientClasses={params.patientClasses}
+                onScheduleChange={handleBlockScheduleChange}
+              />
+              
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={runSimulationHandler}
+                  disabled={isRunning}
+                  className="bg-medical-blue text-white px-4 py-2 rounded hover:bg-opacity-90 disabled:opacity-50"
+                >
+                  {isRunning ? 'Simulaatio käynnissä...' : 'Aja simulaatio'}
+                </button>
+              </div>
+            </TabsContent>
+          </Tabs>
           
           {isRunning ? (
             <Card className="h-[350px] flex items-center justify-center animate-pulse-slow">
@@ -243,12 +285,17 @@ const SimulationDashboard: React.FC = () => {
                             {params.patientClasses.map(pc => {
                               // Count blocks with this patient class
                               const blockCount = params.orBlocks?.filter(
-                                b => b.allowedProcedures.includes(pc.id)
+                                b => {
+                                  // Use both allowedClasses and allowedProcedures for compatibility
+                                  const allowedPatients = b.allowedProcedures || b.allowedClasses;
+                                  return allowedPatients.includes(pc.id);
+                                }
                               ).length || 0;
                               
                               // Calculate total hours for this class
                               const totalHours = params.orBlocks?.reduce((sum, block) => {
-                                if (block.allowedProcedures.includes(pc.id)) {
+                                const allowedPatients = block.allowedProcedures || block.allowedClasses;
+                                if (allowedPatients.includes(pc.id)) {
                                   return sum + (block.end - block.start) / 60;
                                 }
                                 return sum;
@@ -274,6 +321,35 @@ const SimulationDashboard: React.FC = () => {
                                 </Card>
                               );
                             })}
+                          </div>
+                          
+                          <div className="mt-6">
+                            <h3 className="text-lg font-medium mb-3">OR blokit potilasluokittain</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              {params.orBlocks.map(block => {
+                                const allowedPatientClasses = params.patientClasses.filter(pc => 
+                                  (block.allowedProcedures || block.allowedClasses).includes(pc.id)
+                                );
+                                
+                                return (
+                                  <Card key={block.id}>
+                                    <CardContent className="p-4">
+                                      <div className="flex justify-between items-center">
+                                        <span className="font-medium">{block.label || `Block ${block.id}`}</span>
+                                        <span className="text-sm text-muted-foreground">{block.orId}</span>
+                                      </div>
+                                      <div className="mt-2 flex flex-wrap gap-1">
+                                        {allowedPatientClasses.map(pc => (
+                                          <Badge key={pc.id} style={{ backgroundColor: pc.color }}>
+                                            {pc.name}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </CardContent>
+                                  </Card>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
                       ) : (

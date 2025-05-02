@@ -7,9 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from '@/components/ui/use-toast';
 import { Plus, Trash, RotateCw, Clock, Move } from 'lucide-react';
-import { PatientClass } from '@/lib/simulation';
+import { PatientClass, ORBlock } from '@/lib/simulation';
 
-// Block and OR Types
+// ORRoom Type
 interface ORRoom {
   id: string;
   name: string;
@@ -18,11 +18,8 @@ interface ORRoom {
   closeTime: number; // minutes from day start
 }
 
-interface Block {
-  id: string;
-  orId: string;
-  start: number; // minutes from day start
-  end: number; // minutes from day start
+// Block type that extends ORBlock with UI-specific fields
+interface Block extends ORBlock {
   label: string;
   allowedProcedures: string[]; // patient class IDs
   color?: string;
@@ -49,7 +46,9 @@ const createTemplateBlocks = (orId: string): Block[] => {
       start: 7 * 60, 
       end: 10 * 60, 
       label: 'Aamu', 
-      allowedProcedures: ['A'] 
+      allowedProcedures: ['A'],
+      allowedClasses: ['A'],
+      day: 0 
     },
     { 
       id: `${orId}-2`, 
@@ -57,7 +56,9 @@ const createTemplateBlocks = (orId: string): Block[] => {
       start: 10 * 60, 
       end: 13 * 60, 
       label: 'Keskipäivä', 
-      allowedProcedures: ['A', 'D'] 
+      allowedProcedures: ['A', 'D'],
+      allowedClasses: ['A', 'D'],
+      day: 0
     },
     { 
       id: `${orId}-3`, 
@@ -65,7 +66,9 @@ const createTemplateBlocks = (orId: string): Block[] => {
       start: 13 * 60, 
       end: 15 * 60, 
       label: 'Iltapäivä', 
-      allowedProcedures: ['D'] 
+      allowedProcedures: ['D'],
+      allowedClasses: ['D'],
+      day: 0 
     },
   ];
 };
@@ -160,6 +163,8 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
       end: endTime,
       label: 'Uusi blokki',
       allowedProcedures: ['A', 'B', 'C', 'D'], // Allow all by default
+      allowedClasses: ['A', 'B', 'C', 'D'],    // Keep both fields in sync
+      day: 0
     };
     
     setBlocks([...blocks, newBlock]);
@@ -173,7 +178,11 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
   // Update block allowed procedures
   const handleUpdateBlockProcedures = (blockId: string, procedureIds: string[]) => {
     setBlocks(blocks.map(block => 
-      block.id === blockId ? { ...block, allowedProcedures: procedureIds } : block
+      block.id === blockId ? { 
+        ...block, 
+        allowedProcedures: procedureIds,
+        allowedClasses: procedureIds // Keep both fields in sync
+      } : block
     ));
   };
   
@@ -229,8 +238,8 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
         </div>
         
         <div className="mt-2">
-          <Label className="text-xs">Sallitut potilasluokat</Label>
-          <div className="flex flex-wrap mt-1 gap-1">
+          <Label className="text-xs mb-1 block">Sallitut potilasluokat</Label>
+          <div className="flex flex-wrap gap-1">
             {patientClasses.map((pc) => (
               <div
                 key={pc.id}
@@ -253,7 +262,7 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
                   }
                 }}
               >
-                {pc.id}
+                {pc.name}
               </div>
             ))}
           </div>

@@ -253,7 +253,9 @@ export function generateDefaultBlocks(or: OR, day: number): ORBlock[] {
     start: or.openTime,
     end: or.openTime + 180, // 3 hour morning block
     allowedClasses: ["A", "D"], // Default to day surgery types
-    day
+    day,
+    label: "Morning",
+    allowedProcedures: ["A", "D"]
   };
   
   const afternoonBlock: ORBlock = {
@@ -262,7 +264,9 @@ export function generateDefaultBlocks(or: OR, day: number): ORBlock[] {
     start: or.openTime + 180,
     end: or.openTime + 360, // 3 hour afternoon block
     allowedClasses: ["A", "D"], // Default to day surgery types
-    day
+    day,
+    label: "Afternoon", 
+    allowedProcedures: ["A", "D"]
   };
   
   const eveningBlock: ORBlock = {
@@ -271,7 +275,9 @@ export function generateDefaultBlocks(or: OR, day: number): ORBlock[] {
     start: or.openTime + 360,
     end: or.closeTime, // Until close time
     allowedClasses: ["B", "C"], // Default to overnight types
-    day
+    day,
+    label: "Evening",
+    allowedProcedures: ["B", "C"]
   };
   
   return [morningBlock, afternoonBlock, eveningBlock];
@@ -415,8 +421,11 @@ function scheduleCasesInBlocks(
       const timePerCase = blockDuration / casesToAllocate;
       
       // Only use allowed patient classes for this block
+      // Use both allowedClasses and allowedProcedures for compatibility
+      const allowedClassIds = block.allowedProcedures || block.allowedClasses;
+      
       const eligibleClasses = patientClasses.filter(
-        pc => block.allowedClasses.includes(pc.id)
+        pc => allowedClassIds.includes(pc.id)
       );
       
       if (eligibleClasses.length === 0) continue;
@@ -617,8 +626,6 @@ export function runSimulation(params: SimulationParams): SimulationResults {
 
     allArrivals.sort((a, b) => a - b);
   }
-
-  allArrivals.sort((a, b) => a - b);
   
   // Generate patients with their arrival times
   const allPatients: Patient[] = allArrivals.map((arrivalTime, index) => {
@@ -691,7 +698,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
       nurseCareTime: null
     };
   });
-
+  
   // Track peak occupancy times
   const peakTimes: { time: number; occupancy: number }[] = [];
 
