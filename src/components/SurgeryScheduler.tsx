@@ -1,24 +1,30 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Calendar, Clock, ListPlus, Upload, AlertTriangle } from 'lucide-react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableRow,
+} from "@/components/ui/table"
 import { toast } from '@/components/ui/use-toast';
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { PatientClass, SurgeryCase, ORBlock, defaultOrRooms, generateCustomSurgeryList } from '@/lib/simulation';
+import { SurgeryCase, PatientClass, ORBlock } from '@/lib/simulation';
+import { Plus, Edit, Trash, Save, X } from 'lucide-react';
 
 interface SurgerySchedulerProps {
   patientClasses: PatientClass[];
   patientDistribution: Record<string, number>;
   simulationDays: number;
-  onScheduleGenerated: (surgeryList: SurgeryCase[]) => void;
+  onScheduleGenerated: (surgeryList: SurgeryCase[], type: 'template' | 'custom') => void;
   onScheduleTypeChange: (type: 'template' | 'custom') => void;
-  blocks?: { id: string; orId: string; start: number; end: number; day: number; label: string; allowedProcedures: string[] }[];
-  blockScheduleEnabled?: boolean;
+  blocks: ORBlock[];
+  blockScheduleEnabled: boolean;
 }
 
 const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
@@ -27,416 +33,328 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
   simulationDays,
   onScheduleGenerated,
   onScheduleTypeChange,
-  blocks = [],
-  blockScheduleEnabled = false
+  blocks,
+  blockScheduleEnabled
 }) => {
-  const [scheduleMode, setScheduleMode] = useState<'template' | 'generate' | 'upload'>('template');
-  const [orRooms, setOrRooms] = useState<string[]>(defaultOrRooms);
-  const [averageDailySurgeries, setAverageDailySurgeries] = useState(25);
-  const [csvContent, setCsvContent] = useState<string>('');
   const [surgeryList, setSurgeryList] = useState<SurgeryCase[]>([]);
-  const [validationErrors, setValidationErrors] = useState<{invalidCount: number, totalCount: number}>({invalidCount: 0, totalCount: 0});
-  
-  // Set available OR rooms based on blocks if blocks are enabled
+  const [scheduleType, setScheduleType] = useState<'template' | 'custom'>('template');
+  const [newSurgery, setNewSurgery] = useState<Omit<SurgeryCase, 'id'>>({
+    classId: patientClasses[0]?.id || '',
+    scheduledStartTime: 0,
+    duration: 60,
+    orRoom: 'OR-1',
+    priority: 3,
+    arrivalTime: 0
+  });
+  const [editingSurgeryId, setEditingSurgeryId] = useState<string | null>(null);
+  const [editedSurgery, setEditedSurgery] = useState<SurgeryCase | null>(null);
+
+  // Update parent component when surgery list changes
   useEffect(() => {
-    if (blockScheduleEnabled && blocks.length > 0) {
-      // Extract unique OR room IDs from blocks
-      const uniqueORs = Array.from(new Set(blocks.map(block => block.orId)));
-      if (uniqueORs.length > 0) {
-        setOrRooms(uniqueORs);
-      }
-    }
-  }, [blockScheduleEnabled, blocks]);
-  
-  // Handle mode change
-  const handleModeChange = (mode: 'template' | 'generate' | 'upload') => {
-    setScheduleMode(mode);
-    onScheduleTypeChange(mode === 'template' ? 'template' : 'custom');
-    
-    // Clear validation errors when changing mode
-    setValidationErrors({invalidCount: 0, totalCount: 0});
+    onScheduleGenerated(surgeryList, scheduleType);
+  }, [surgeryList, scheduleType, onScheduleGenerated]);
+
+  // Handle schedule type change
+  const handleTypeChange = (type: 'template' | 'custom') => {
+    setScheduleType(type);
+    onScheduleTypeChange(type);
   };
-  
-  // Generate surgery list
-  const handleGenerateSchedule = () => {
-    const generatedList = generateCustomSurgeryList(
-      simulationDays,
-      orRooms,
-      patientClasses,
-      patientDistribution,
-      averageDailySurgeries
-    );
-    
-    setSurgeryList(generatedList);
-    onScheduleGenerated(generatedList);
-    
-    toast({
-      title: "Leikkauslista generoitu",
-      description: `${generatedList.length} leikkausta ${simulationDays} päivälle.`
-    });
-    
-    // If blocks are enabled, validate the generated list against blocks
-    if (blockScheduleEnabled && blocks.length > 0) {
-      validateAgainstBlocks(generatedList);
-    }
-  };
-  
-  // Handle file upload
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setCsvContent(content);
-      parseCSV(content);
-    };
-    
-    reader.readAsText(file);
-  };
-  
-  // Parse CSV to surgery list
-  const parseCSV = (content: string) => {
-    try {
-      // Skip header row
-      const rows = content.split('\n').slice(1);
-      const surgeryList: SurgeryCase[] = [];
-      
-      rows.forEach((row, index) => {
-        if (!row.trim()) return; // Skip empty rows
-        
-        const columns = row.split(',');
-        if (columns.length < 5) {
-          throw new Error(`Invalid row format at line ${index + 2}`);
-        }
-        
-        // Expected format: id,classId,orRoom,startTime,duration
-        const [id, classId, orRoom, startTimeStr, durationStr] = columns;
-        
-        // Convert time format (e.g., "1 08:30" = day 1, 8:30 AM)
-        const [dayStr, timeStr] = startTimeStr.split(' ');
-        const day = parseInt(dayStr, 10) - 1; // 0-based days
-        const [hours, minutes] = timeStr.split(':').map(Number);
-        const startTime = day * 1440 + hours * 60 + minutes;
-        
-        surgeryList.push({
-          id: id.trim(),
-          classId: classId.trim(),
-          orRoom: orRoom.trim(),
-          scheduledStartTime: startTime,
-          duration: parseInt(durationStr, 10)
-        });
-      });
-      
-      if (surgeryList.length === 0) {
-        throw new Error("No valid surgery entries found in the CSV");
-      }
-      
-      // Sort by start time and send to parent
-      const sortedList = surgeryList.sort((a, b) => a.scheduledStartTime - b.scheduledStartTime);
-      setSurgeryList(sortedList);
-      onScheduleGenerated(sortedList);
-      
+
+  // Add a new surgery to the list
+  const handleAddSurgery = () => {
+    // Validate
+    if (!newSurgery.classId || !newSurgery.duration || !newSurgery.orRoom) {
       toast({
-        title: "Leikkauslista ladattu",
-        description: `${surgeryList.length} leikkausta tuotu onnistuneesti.`
-      });
-      
-      // If blocks are enabled, validate against blocks
-      if (blockScheduleEnabled && blocks.length > 0) {
-        validateAgainstBlocks(sortedList);
-      }
-      
-    } catch (error) {
-      console.error("CSV parsing error:", error);
-      toast({
-        title: "Virhe tiedoston käsittelyssä",
-        description: error instanceof Error ? error.message : "Tiedosto on virheellinen.",
+        title: "Puuttuvia tietoja",
+        description: "Täytä kaikki pakolliset kentät.",
         variant: "destructive"
       });
+      return;
     }
-  };
-  
-  // Validate surgeries against blocks
-  const validateAgainstBlocks = (surgeries: SurgeryCase[]) => {
-    if (!blockScheduleEnabled || blocks.length === 0) {
-      setValidationErrors({invalidCount: 0, totalCount: 0});
+
+    // Check for overlapping surgeries
+    const isOverlapping = surgeryList.some(surgery => {
+      return (
+        surgery.orRoom === newSurgery.orRoom &&
+        surgery.scheduledStartTime < newSurgery.scheduledStartTime + newSurgery.duration &&
+        surgery.scheduledStartTime + surgery.duration > newSurgery.scheduledStartTime
+      );
+    });
+
+    if (isOverlapping) {
+      // warning-variant korjaaminen
+      toast({
+        title: "Validointivirhe",
+        description: `Leikkaus päällekkäinen: ${newSurgery.classId}`,
+        variant: "destructive"  // Muutettu warning -> destructive
+      });
       return;
     }
     
-    let invalidCount = 0;
-    
-    surgeries.forEach(surgery => {
+    // Validate against blocks
+    if (blockScheduleEnabled && blocks.length > 0) {
+      const orBlocks = blocks;
+      
       // Calculate surgery day and time
-      const surgeryDay = Math.floor(surgery.scheduledStartTime / 1440); // 1440 minutes in a day
-      const surgeryStartTime = surgery.scheduledStartTime % 1440; // Time within the day
-      const surgeryEndTime = surgeryStartTime + surgery.duration;
+      const surgeryDay = Math.floor(newSurgery.scheduledStartTime / 1440); // 1440 minutes in a day
+      const surgeryStartTime = newSurgery.scheduledStartTime % 1440; // Time within the day
+      const surgeryEndTime = surgeryStartTime + newSurgery.duration;
       
       // Find matching block for this surgery
-      const matchingBlock = blocks.find(block => {
-        return block.orId === surgery.orRoom && 
+      const matchingBlock = orBlocks.find(block => {
+        return block.orId === newSurgery.orRoom && 
                block.day === surgeryDay &&
                surgeryStartTime >= block.start && 
                surgeryEndTime <= block.end &&
-               block.allowedProcedures.includes(surgery.classId);
+               block.allowedClasses.includes(newSurgery.classId);
       });
       
       if (!matchingBlock) {
-        invalidCount++;
+        // warning-variant korjaaminen
+        toast({
+          title: "Blokkisääntövirhe",
+          description: `Leikkaus '${newSurgery.classId}' ei sovi yhteenkään määriteltyyn blokkiin.`,
+          variant: "destructive"  // Muutettu warning -> destructive
+        });
+        return;
       }
-    });
-    
-    setValidationErrors({
-      invalidCount,
-      totalCount: surgeries.length
-    });
-    
-    if (invalidCount > 0) {
-      toast({
-        title: "Yhteensopivuusvaroitus",
-        description: `${invalidCount} leikkausta ${surgeries.length} leikkauksesta ei vastaa määritettyjä blokkeja.`,
-        variant: "warning"
-      });
     }
-  };
-  
-  // Add a new OR room
-  const handleAddOrRoom = () => {
-    const newRoomNumber = orRooms.length + 1;
-    setOrRooms([...orRooms, `OR-${newRoomNumber}`]);
-  };
-  
-  // Remove an OR room
-  const handleRemoveOrRoom = (index: number) => {
-    if (orRooms.length <= 1) return;
-    const updatedRooms = [...orRooms];
-    updatedRooms.splice(index, 1);
-    setOrRooms(updatedRooms);
-  };
-  
-  // Download a sample CSV template
-  const handleDownloadTemplate = () => {
-    const header = 'id,classId,orRoom,startTime,duration\n';
-    const rows = [
-      'case-1,A,OR-1,1 08:30,90',
-      'case-2,B,OR-2,1 09:00,120',
-      'case-3,D,OR-1,1 10:30,75',
-      'case-4,C,OR-3,1 11:00,180',
-      'case-5,A,OR-2,1 12:00,60'
-    ];
-    
-    const content = header + rows.join('\n');
-    const blob = new Blob([content], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'leikkauslista-pohja.csv';
-    a.click();
-    
-    URL.revokeObjectURL(url);
-  };
-  
-  // Format minutes to HH:MM display
-  const formatTime = (minutes: number): string => {
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-  };
-  
-  // Get block info for a specific OR
-  const getBlockInfo = (orId: string) => {
-    if (!blockScheduleEnabled || blocks.length === 0) return null;
-    
-    const orBlocks = blocks.filter(block => block.orId === orId);
-    if (orBlocks.length === 0) return null;
-    
-    // Get unique patient classes allowed in this OR
-    const allowedClasses = Array.from(
-      new Set(orBlocks.flatMap(block => block.allowedProcedures))
-    );
-    
-    // Get operating hours (min start to max end time)
-    const minStart = Math.min(...orBlocks.map(block => block.start));
-    const maxEnd = Math.max(...orBlocks.map(block => block.end));
-    
-    return {
-      blocks: orBlocks.length,
-      allowedClasses,
-      operatingHours: `${formatTime(minStart)} - ${formatTime(maxEnd)}`,
-      totalHours: orBlocks.reduce((sum, block) => sum + (block.end - block.start) / 60, 0)
+
+    const newId = `S-${surgeryList.length + 1}`;
+    const surgeryToAdd: SurgeryCase = {
+      id: newId,
+      ...newSurgery
     };
+    setSurgeryList([...surgeryList, surgeryToAdd]);
+    setNewSurgery({
+      classId: patientClasses[0]?.id || '',
+      scheduledStartTime: 0,
+      duration: 60,
+      orRoom: 'OR-1',
+      priority: 3,
+      arrivalTime: 0
+    });
+
+    toast({
+      title: "Leikkaus lisätty",
+      description: `${newId} lisätty leikkauslistaan.`
+    });
+  };
+
+  // Remove a surgery from the list
+  const handleRemoveSurgery = (surgeryId: string) => {
+    setSurgeryList(surgeryList.filter(surgery => surgery.id !== surgeryId));
+
+    toast({
+      title: "Leikkaus poistettu",
+      description: `${surgeryId} poistettu leikkauslistasta.`
+    });
+  };
+
+  // Start editing a surgery
+  const handleEditSurgery = (surgery: SurgeryCase) => {
+    setEditingSurgeryId(surgery.id);
+    setEditedSurgery(surgery);
+  };
+
+  // Cancel editing
+  const handleCancelEdit = () => {
+    setEditingSurgeryId(null);
+    setEditedSurgery(null);
+  };
+
+  // Save edited surgery
+  const handleSaveEdit = () => {
+    if (!editedSurgery) return;
+
+    // Validate
+    if (!editedSurgery.classId || !editedSurgery.duration || !editedSurgery.orRoom) {
+      toast({
+        title: "Puuttuvia tietoja",
+        description: "Täytä kaikki pakolliset kentät.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Check for overlapping surgeries
+    const isOverlapping = surgeryList.some(surgery => {
+      return (
+        surgery.id !== editedSurgery.id &&
+        surgery.orRoom === editedSurgery.orRoom &&
+        surgery.scheduledStartTime < editedSurgery.scheduledStartTime + editedSurgery.duration &&
+        surgery.scheduledStartTime + surgery.duration > editedSurgery.scheduledStartTime
+      );
+    });
+
+    if (isOverlapping) {
+      toast({
+        title: "Validointivirhe",
+        description: `Leikkaus päällekkäinen: ${editedSurgery.id}`,
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Validate against blocks
+    if (blockScheduleEnabled && blocks.length > 0) {
+      const orBlocks = blocks;
+      
+      // Calculate surgery day and time
+      const surgeryDay = Math.floor(editedSurgery.scheduledStartTime / 1440); // 1440 minutes in a day
+      const surgeryStartTime = editedSurgery.scheduledStartTime % 1440; // Time within the day
+      const surgeryEndTime = surgeryStartTime + editedSurgery.duration;
+      
+      // Find matching block for this surgery
+      const matchingBlock = orBlocks.find(block => {
+        return block.orId === editedSurgery.orRoom && 
+               block.day === surgeryDay &&
+               surgeryStartTime >= block.start && 
+               surgeryEndTime <= block.end &&
+               block.allowedClasses.includes(editedSurgery.classId);
+      });
+      
+      if (!matchingBlock) {
+        toast({
+          title: "Blokkisääntövirhe",
+          description: `Leikkaus '${editedSurgery.id}' ei sovi yhteenkään määriteltyyn blokkiin.`,
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
+    setSurgeryList(surgeryList.map(surgery =>
+      surgery.id === editedSurgeryId ? editedSurgery : surgery
+    ));
+    setEditingSurgeryId(null);
+    setEditedSurgery(null);
+
+    toast({
+      title: "Leikkaus päivitetty",
+      description: `${editedSurgery.id} päivitetty leikkauslistassa.`
+    });
   };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-lg">Leikkauslistan hallinta</CardTitle>
-        {blockScheduleEnabled && blocks.length > 0 && (
-          <div className="text-sm text-muted-foreground">
-            Leikkauslista perustuu {blocks.length} määritettyyn saliblokkiin.
-          </div>
-        )}
+        <CardTitle>Leikkausaikataulu</CardTitle>
       </CardHeader>
       <CardContent>
-        <Tabs 
-          defaultValue="template" 
-          value={scheduleMode}
-          onValueChange={(value) => handleModeChange(value as any)}
-          className="space-y-4"
-        >
-          <TabsList className="grid grid-cols-3">
-            <TabsTrigger value="template">
-              <Clock className="h-4 w-4 mr-2" />
-              Automaattinen
-            </TabsTrigger>
-            <TabsTrigger value="generate">
-              <ListPlus className="h-4 w-4 mr-2" />
-              Generoi lista
-            </TabsTrigger>
-            <TabsTrigger value="upload">
-              <Upload className="h-4 w-4 mr-2" />
-              Lataa CSV
-            </TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="template" className="space-y-4">
-            <div className="text-sm text-muted-foreground">
-              <p>Käytetään automaattista leikkauslistaa, joka perustuu päivittäisiin leikkausmääriin ja tuntijakaumaan.</p>
-            </div>
-            
-            {blockScheduleEnabled && blocks.length > 0 && (
-              <Alert>
-                <AlertTitle className="flex items-center">
-                  <Calendar className="h-4 w-4 mr-2" />
-                  Saliblokit käytössä
-                </AlertTitle>
-                <AlertDescription>
-                  Automaattinen leikkauslista generoidaan salisuunnittelun blokkien perusteella.
-                </AlertDescription>
-              </Alert>
-            )}
-          </TabsContent>
-          
-          <TabsContent value="generate" className="space-y-4">
-            <div>
-              <Label htmlFor="avgDailySurgeries">Leikkauksia/päivä</Label>
-              <div className="flex items-center gap-3 mt-1">
+        <div className="mb-4">
+          <Label>Aikataulun tyyppi</Label>
+          <Select value={scheduleType} onValueChange={handleTypeChange}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Valitse aikataulun tyyppi" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="template">Oletus</SelectItem>
+              <SelectItem value="custom">Mukautettu</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {scheduleType === 'custom' && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4">
+              <div>
+                <Label htmlFor="classId">Potilasluokka</Label>
+                <Select
+                  value={newSurgery.classId}
+                  onValueChange={(value) => setNewSurgery({ ...newSurgery, classId: value })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Valitse luokka" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {patientClasses.map(pc => (
+                      <SelectItem key={pc.id} value={pc.id}>{pc.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="orRoom">Leikkaussali</Label>
                 <Input
-                  id="avgDailySurgeries"
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={averageDailySurgeries}
-                  onChange={(e) => setAverageDailySurgeries(parseInt(e.target.value, 10))}
+                  id="orRoom"
+                  type="text"
+                  value={newSurgery.orRoom}
+                  onChange={(e) => setNewSurgery({ ...newSurgery, orRoom: e.target.value })}
                 />
-                <span>{averageDailySurgeries}</span>
               </div>
-            </div>
-            
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <Label>Leikkaussalit</Label>
-                <Button variant="outline" size="sm" onClick={handleAddOrRoom}>
-                  Lisää sali
+              <div>
+                <Label htmlFor="scheduledStartTime">Aloitusaika</Label>
+                <Input
+                  id="scheduledStartTime"
+                  type="number"
+                  value={newSurgery.scheduledStartTime}
+                  onChange={(e) => setNewSurgery({ ...newSurgery, scheduledStartTime: parseInt(e.target.value) })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="duration">Kesto (min)</Label>
+                <Input
+                  id="duration"
+                  type="number"
+                  value={newSurgery.duration}
+                  onChange={(e) => setNewSurgery({ ...newSurgery, duration: parseInt(e.target.value) })}
+                />
+              </div>
+              <div className="md:col-span-2 flex items-end">
+                <Button onClick={handleAddSurgery}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Lisää leikkaus
                 </Button>
               </div>
-              
-              <div className="grid grid-cols-3 gap-2">
-                {orRooms.map((room, index) => (
-                  <div key={index} className="flex items-center gap-1">
-                    <Input 
-                      value={room} 
-                      onChange={(e) => {
-                        const updatedRooms = [...orRooms];
-                        updatedRooms[index] = e.target.value;
-                        setOrRooms(updatedRooms);
-                      }}
-                      disabled={blockScheduleEnabled && blocks.length > 0}
-                    />
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-8 w-8" 
-                      onClick={() => handleRemoveOrRoom(index)}
-                      disabled={blockScheduleEnabled && blocks.length > 0}
-                    >
-                      ×
-                    </Button>
-                    
-                    {blockScheduleEnabled && blocks.length > 0 && getBlockInfo(room) && (
-                      <div className="absolute mt-10 text-xs text-muted-foreground">
-                        {getBlockInfo(room)?.operatingHours}
-                      </div>
-                    )}
-                  </div>
+            </div>
+
+            <Table>
+              <TableCaption>Leikkausaikataulu</TableCaption>
+              <TableHead>
+                <TableRow>
+                  <TableHead>Luokka</TableHead>
+                  <TableHead>Sali</TableHead>
+                  <TableHead>Aloitusaika</TableHead>
+                  <TableHead>Kesto</TableHead>
+                  <TableHead className="text-right">Toiminnot</TableHead>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {surgeryList.map(surgery => (
+                  <TableRow key={surgery.id}>
+                    <TableCell>{patientClasses.find(pc => pc.id === surgery.classId)?.name}</TableCell>
+                    <TableCell>{surgery.orRoom}</TableCell>
+                    <TableCell>{surgery.scheduledStartTime}</TableCell>
+                    <TableCell>{surgery.duration}</TableCell>
+                    <TableCell className="text-right">
+                      {editingSurgeryId === surgery.id ? (
+                        <div className="flex justify-end space-x-2">
+                          <Button size="sm" variant="ghost" onClick={handleCancelEdit}>
+                            <X className="h-4 w-4 mr-1" />
+                            Peruuta
+                          </Button>
+                          <Button size="sm" onClick={handleSaveEdit}>
+                            <Save className="h-4 w-4 mr-1" />
+                            Tallenna
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex justify-end space-x-2">
+                          <Button size="sm" variant="ghost" onClick={() => handleEditSurgery(surgery)}>
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleRemoveSurgery(surgery.id)}>
+                            <Trash className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </div>
-              
-              {blockScheduleEnabled && blocks.length > 0 && (
-                <div className="mt-4 text-sm">
-                  <Alert variant="warning">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Huomio</AlertTitle>
-                    <AlertDescription>
-                      Leikkauslista generoidaan saliblokkien perusteella. Salit on määritetty blokkien mukaan.
-                    </AlertDescription>
-                  </Alert>
-                </div>
-              )}
-            </div>
-            
-            <Button onClick={handleGenerateSchedule} className="w-full">
-              <Calendar className="h-4 w-4 mr-2" />
-              Generoi leikkauslista
-            </Button>
-          </TabsContent>
-          
-          <TabsContent value="upload" className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="csvUpload">Lataa leikkauslista (CSV)</Label>
-              <Input
-                id="csvUpload"
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-              />
-              <p className="text-xs text-muted-foreground">
-                CSV-tiedoston tulee sisältää sarakkeet: id,classId,orRoom,startTime,duration
-              </p>
-              <div className="pt-2">
-                <Button variant="outline" size="sm" onClick={handleDownloadTemplate}>
-                  Lataa CSV-pohja
-                </Button>
-              </div>
-            </div>
-            
-            {blockScheduleEnabled && blocks.length > 0 && (
-              <Alert>
-                <AlertTitle className="flex items-center">
-                  <AlertTriangle className="h-4 w-4 mr-2" />
-                  Saliblokit käytössä
-                </AlertTitle>
-                <AlertDescription>
-                  Ladatut leikkaukset tarkistetaan saliblokkien yhteensopivuuden suhteen.
-                </AlertDescription>
-              </Alert>
-            )}
-          </TabsContent>
-        </Tabs>
-        
-        {validationErrors.invalidCount > 0 && (
-          <div className="mt-4">
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>Yhteensopivuusvirheitä</AlertTitle>
-              <AlertDescription>
-                {validationErrors.invalidCount} leikkausta {validationErrors.totalCount} leikkauksesta ei vastaa määritettyjä blokkeja. 
-                Tarkista leikkausten ajat ja potilasluokat.
-              </AlertDescription>
-            </Alert>
-          </div>
+              </TableBody>
+            </Table>
+          </>
         )}
       </CardContent>
     </Card>

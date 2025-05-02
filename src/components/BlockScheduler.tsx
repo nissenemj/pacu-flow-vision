@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from '@/components/ui/use-toast';
-import { Plus, Trash, RotateCw, Clock, Move } from 'lucide-react';
+import { Slider } from "@/components/ui/slider";
+import { Plus, Trash, RotateCw, Clock, Move, Edit, Save, X } from 'lucide-react';
 import { PatientClass, ORBlock } from '@/lib/simulation';
 
 // ORRoom Type
@@ -81,6 +82,12 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
   const [orRooms, setORRooms] = useState<ORRoom[]>(defaultORRooms);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [draggingBlock, setDraggingBlock] = useState<Block | null>(null);
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+  const [editingBlock, setEditingBlock] = useState<{
+    label: string;
+    start: number;
+    end: number;
+  } | null>(null);
   
   // Initialize blocks
   useEffect(() => {
@@ -185,6 +192,87 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
       } : block
     ));
   };
+
+  // Start editing block
+  const handleStartEditBlock = (block: Block) => {
+    setEditingBlockId(block.id);
+    setEditingBlock({
+      label: block.label,
+      start: block.start,
+      end: block.end
+    });
+  };
+
+  // Save block edits
+  const handleSaveBlockEdits = () => {
+    if (!editingBlockId || !editingBlock) return;
+
+    // Validate time values
+    if (editingBlock.start >= editingBlock.end) {
+      toast({
+        title: "Virheelliset ajat",
+        description: "Alkuajan täytyy olla ennen loppuaikaa.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const orId = blocks.find(b => b.id === editingBlockId)?.orId;
+    if (!orId) return;
+
+    const orRoom = orRooms.find(or => or.id === orId);
+    if (!orRoom) return;
+
+    // Validate against OR opening hours
+    if (editingBlock.start < orRoom.openTime || editingBlock.end > orRoom.closeTime) {
+      toast({
+        title: "Aika salin aukioloajan ulkopuolella",
+        description: "Blokin ajat ylittävät leikkaussalin aukioloajan.",
+        variant: "destructive" 
+      });
+      return;
+    }
+
+    // Check for overlapping blocks in the same OR
+    const otherBlocks = blocks.filter(b => b.orId === orId && b.id !== editingBlockId);
+    const isOverlapping = otherBlocks.some(b => {
+      return (editingBlock.start < b.end && editingBlock.end > b.start);
+    });
+
+    if (isOverlapping) {
+      toast({
+        title: "Päällekkäiset blokit",
+        description: "Blokki menee päällekkäin toisen blokin kanssa.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Update block
+    setBlocks(blocks.map(block => 
+      block.id === editingBlockId ? { 
+        ...block, 
+        label: editingBlock.label,
+        start: editingBlock.start,
+        end: editingBlock.end
+      } : block
+    ));
+
+    // Reset editing state
+    setEditingBlockId(null);
+    setEditingBlock(null);
+
+    toast({
+      title: "Blokki päivitetty",
+      description: "Blokin tiedot päivitetty onnistuneesti."
+    });
+  };
+
+  // Cancel block editing
+  const handleCancelBlockEdit = () => {
+    setEditingBlockId(null);
+    setEditingBlock(null);
+  };
   
   // Optimize schedule (placeholder for now)
   const handleOptimizeSchedule = () => {
@@ -210,6 +298,34 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
     return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
   };
 
+  // Convert HH:MM string to minutes
+  const parseTimeToMinutes = (timeString: string): number => {
+    const [hours, minutes] = timeString.split(':').map(Number);
+    return (hours * 60) + minutes;
+  };
+
+  // Format minutes for input field (HH:MM)
+  const formatTimeForInput = (minutes: number): string => {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+  };
+
+  // Handle time input change
+  const handleTimeInputChange = (type: 'start' | 'end', value: string) => {
+    if (!editingBlock) return;
+    
+    try {
+      const minutes = parseTimeToMinutes(value);
+      setEditingBlock({
+        ...editingBlock,
+        [type]: minutes
+      });
+    } catch (e) {
+      // Invalid time format, ignore
+    }
+  };
+
   // Render the block with patient class colors
   const renderBlock = (block: Block) => {
     // Find matching patient class for color
@@ -217,56 +333,108 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
       pc => pc.id === block.allowedProcedures[0]
     )?.color;
     
+    const isEditing = editingBlockId === block.id;
+    
     return (
       <div 
         key={block.id}
         className="mb-2 p-2 rounded border relative"
         style={{ backgroundColor: blockColor ? `${blockColor}20` : undefined, borderColor: blockColor }}
       >
-        <div className="flex justify-between items-center">
-          <div>
-            <div className="font-medium">{block.label}</div>
-            <div className="text-sm text-gray-600">
-              {formatTime(block.start)} - {formatTime(block.end)} ({Math.round((block.end - block.start) / 60 * 10) / 10}h)
+        {isEditing ? (
+          <div className="space-y-2">
+            <div className="flex items-center space-x-2">
+              <Input 
+                value={editingBlock?.label || ''}
+                onChange={(e) => setEditingBlock({...editingBlock!, label: e.target.value})}
+                className="flex-grow"
+                placeholder="Blokin nimi"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Alkuaika</Label>
+                <div className="flex items-center space-x-2">
+                  <Input 
+                    type="time"
+                    value={formatTimeForInput(editingBlock?.start || 0)}
+                    onChange={(e) => handleTimeInputChange('start', e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs">Loppuaika</Label>
+                <div className="flex items-center space-x-2">
+                  <Input 
+                    type="time"
+                    value={formatTimeForInput(editingBlock?.end || 0)}
+                    onChange={(e) => handleTimeInputChange('end', e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-2 mt-2">
+              <Button size="sm" variant="ghost" onClick={handleCancelBlockEdit}>
+                <X className="h-4 w-4 mr-1" /> Peruuta
+              </Button>
+              <Button size="sm" onClick={handleSaveBlockEdits}>
+                <Save className="h-4 w-4 mr-1" /> Tallenna
+              </Button>
             </div>
           </div>
-          <div className="flex space-x-1">
-            <Button size="sm" variant="ghost" onClick={() => handleRemoveBlock(block.id)}>
-              <Trash className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-        
-        <div className="mt-2">
-          <Label className="text-xs mb-1 block">Sallitut potilasluokat</Label>
-          <div className="flex flex-wrap gap-1">
-            {patientClasses.map((pc) => (
-              <div
-                key={pc.id}
-                className={`px-2 py-1 text-xs rounded cursor-pointer ${
-                  block.allowedProcedures.includes(pc.id) 
-                    ? 'text-white' 
-                    : 'text-gray-600 bg-gray-100'
-                }`}
-                style={{
-                  backgroundColor: block.allowedProcedures.includes(pc.id) ? pc.color : undefined
-                }}
-                onClick={() => {
-                  const updatedProcedures = block.allowedProcedures.includes(pc.id) 
-                    ? block.allowedProcedures.filter(id => id !== pc.id)
-                    : [...block.allowedProcedures, pc.id];
-                  
-                  // Ensure at least one procedure type is selected
-                  if (updatedProcedures.length > 0) {
-                    handleUpdateBlockProcedures(block.id, updatedProcedures);
-                  }
-                }}
-              >
-                {pc.name}
+        ) : (
+          <>
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="font-medium">{block.label}</div>
+                <div className="text-sm text-gray-600">
+                  {formatTime(block.start)} - {formatTime(block.end)} ({Math.round((block.end - block.start) / 60 * 10) / 10}h)
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="flex space-x-1">
+                <Button size="sm" variant="ghost" onClick={() => handleStartEditBlock(block)}>
+                  <Edit className="h-4 w-4" />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => handleRemoveBlock(block.id)}>
+                  <Trash className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            
+            <div className="mt-2">
+              <Label className="text-xs mb-1 block">Sallitut potilasluokat</Label>
+              <div className="flex flex-wrap gap-1">
+                {patientClasses.map((pc) => (
+                  <div
+                    key={pc.id}
+                    className={`px-2 py-1 text-xs rounded cursor-pointer ${
+                      block.allowedProcedures.includes(pc.id) 
+                        ? 'text-white' 
+                        : 'text-gray-600 bg-gray-100'
+                    }`}
+                    style={{
+                      backgroundColor: block.allowedProcedures.includes(pc.id) ? pc.color : undefined
+                    }}
+                    onClick={() => {
+                      const updatedProcedures = block.allowedProcedures.includes(pc.id) 
+                        ? block.allowedProcedures.filter(id => id !== pc.id)
+                        : [...block.allowedProcedures, pc.id];
+                      
+                      // Ensure at least one procedure type is selected
+                      if (updatedProcedures.length > 0) {
+                        handleUpdateBlockProcedures(block.id, updatedProcedures);
+                      }
+                    }}
+                  >
+                    {pc.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     );
   };

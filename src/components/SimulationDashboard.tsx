@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useEffect } from 'react';
 import { 
   defaultSimulationParams, 
@@ -228,7 +227,7 @@ const SimulationDashboard: React.FC = () => {
       toast({
         title: "Yhteensopivuusvaroitus",
         description: `${invalidSurgeries} leikkausta ei vastaa määritettyjä blokkeja.`,
-        variant: "warning"
+        variant: "destructive"
       });
     }
   };
