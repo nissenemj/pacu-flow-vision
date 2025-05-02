@@ -668,6 +668,123 @@ export const defaultWardBedAvailability: number[] = [
   60, 60, 60, 60, 60, 60  // 7 PM - 11 PM: Lower availability
 ];
 
+// Default patient classes
+export const defaultPatientClasses: PatientClass[] = [
+  {
+    id: "A", 
+    name: "Same-day Discharge", 
+    color: "#0ea5e9", 
+    meanStayMinutes: 90, 
+    stdDevMinutes: 25, 
+    isOvernight: false,
+    averagePacuTime: 90, 
+    processType: 'outpatient', 
+    nurseRequirement: 1.0, 
+    phase1Minutes: 60, 
+    phase2Minutes: 30, 
+    transferDelayProbability: 0.01, 
+    transferDelayMinutes: 15
+  },
+  {
+    id: "B", 
+    name: "Next-day Discharge", 
+    color: "#22c55e", 
+    meanStayMinutes: 480, 
+    stdDevMinutes: 60, 
+    isOvernight: true,
+    averagePacuTime: 480, 
+    processType: 'standard', 
+    nurseRequirement: 1.0, 
+    phase1Minutes: 120, 
+    phase2Minutes: 360, 
+    transferDelayProbability: 0.1, 
+    transferDelayMinutes: 45
+  },
+  {
+    id: "C", 
+    name: "Overnight to Ward", 
+    color: "#eab308", 
+    meanStayMinutes: 540, 
+    stdDevMinutes: 90, 
+    isOvernight: true,
+    averagePacuTime: 540, 
+    processType: 'standard', 
+    nurseRequirement: 1.5, 
+    phase1Minutes: 180, 
+    phase2Minutes: 360, 
+    transferDelayProbability: 0.15, 
+    transferDelayMinutes: 60
+  },
+  {
+    id: "D", 
+    name: "Standard PACU to Ward", 
+    color: "#ef4444", 
+    meanStayMinutes: 150, 
+    stdDevMinutes: 30, 
+    isOvernight: false,
+    averagePacuTime: 150, 
+    processType: 'standard', 
+    nurseRequirement: 1.0, 
+    phase1Minutes: 90, 
+    phase2Minutes: 60, 
+    transferDelayProbability: 0.05, 
+    transferDelayMinutes: 30
+  },
+  {
+    id: "E", 
+    name: "Direct Transfer", 
+    color: "#a855f7", 
+    meanStayMinutes: 60, 
+    stdDevMinutes: 15, 
+    isOvernight: false,
+    averagePacuTime: 60, 
+    processType: 'directTransfer', 
+    nurseRequirement: 0.8, 
+    phase1Minutes: 45, 
+    phase2Minutes: 15, 
+    transferDelayProbability: 0.02, 
+    transferDelayMinutes: 10
+  }
+];
+
+// Default simulation parameters
+export const defaultSimulationParams: SimulationParams = {
+  beds: 12,
+  phase1Beds: 8,
+  phase2Beds: 4,
+  nurses: 6,
+  nurseRoles: defaultNurseRoles,
+  nursePatientRatio: 2,
+  wardBedAvailability: defaultWardBedAvailability,
+  specialEquipment: defaultSpecialEquipment,
+  patientClasses: defaultPatientClasses,
+  patientClassDistribution: { "A": 0.30, "B": 0.20, "C": 0.15, "D": 0.35 },
+  surgeryScheduleTemplate: { 
+    averageDailySurgeries: 25, 
+    hourlyDistribution: [0.05, 0.10, 0.15, 0.20, 0.15, 0.10, 0.10, 0.05, 0.05, 0.03, 0.02, 0] 
+  },
+  simulationDays: 30,
+  surgeryScheduleType: 'template',
+  blockScheduleEnabled: false,
+  ors: defaultORs.filter(or => !or.isExtra),
+  orBlocks: generateDefaultBlockSchedule(defaultORs.filter(or => !or.isExtra), 1),
+  optimizationWeights: { 
+    peakOccupancy: 1.0, 
+    overtime: 0.8, 
+    extraORCost: 0.3, 
+    emergencyBuffer: 0.1 
+  }
+};
+
+// Calculate percentile value from array
+function calculatePercentile(values: number[], percentile: number): number {
+  if (values.length === 0) return 0;
+  
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.ceil((percentile / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, Math.min(index, sorted.length - 1))];
+}
+
 export function runSimulation(params: SimulationParams): SimulationResults {
   const { 
     beds,
@@ -747,126 +864,3 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   // Queues for different phases
   const arrivalQueue: Patient[] = []; // Queue for initial arrival
   const phase1Queue: Patient[] = [];  // Queue for Phase I
-  const phase2Queue: Patient[] = [];  // Queue for Phase II
-  
-  // Transfer delay tracking
-  let transferDelayCount = 0;
-  let totalTransferDelayMinutes = 0;
-  
-  // Phase transition time tracking
-  const phase1Durations: number[] = [];
-  const phase2Durations: number[] = [];
-  const waitForPhase2Times: number[] = [];
-  
-  // Active patients in PACU
-  const activePacuPatients: Patient[] = [];
-  
-  // Generate all surgery finish times (PACU arrivals)
-  let allArrivals: number[] = [];
-  let blockScheduledCases: SurgeryCase[] = [];
-  
-  // Track OR utilization if using custom surgery list
-  const orUtilization: Record<string, number[]> = {};
-  
-  // Use custom surgery list or generate from template
-  if (blockScheduleEnabled && orBlocks && orBlocks.length > 0) {
-    // Use blocks to schedule surgeries
-    const activeORs = ors?.filter(or => orBlocks.some(block => block.orId === or.id)) || [];
-    
-    // Calculate total OR cost
-    const orCosts = activeORs.reduce((total, or) => total + (or.isExtra ? or.costPerDay : 0), 0);
-    
-    // Schedule cases based on blocks
-    const averageDaily = surgeryScheduleTemplate.averageDailySurgeries;
-    const totalSurgeries = Math.round(averageDaily * simulationDays);
-    
-    blockScheduledCases = scheduleCasesInBlocks(
-      patientClasses, 
-      orBlocks, 
-      simulationDays,
-      totalSurgeries
-    );
-    
-    // Calculate surgery finish times from scheduled cases
-    allArrivals = blockScheduledCases.map(surgery => {
-      // Surgery finish time = start + duration
-      return surgery.scheduledStartTime + surgery.duration;
-    });
-    
-    // Calculate OR utilization
-    const orIds = [...new Set(blockScheduledCases.map(s => s.orRoom))];
-    orIds.forEach(orId => {
-      orUtilization[orId] = new Array(timePoints).fill(0);
-      
-      // Mark time slots where OR is in use
-      blockScheduledCases.forEach(surgery => {
-        if (surgery.orRoom === orId) {
-          const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
-          const endSlot = Math.floor((surgery.scheduledStartTime + surgery.duration) / timeIncrement);
-          
-          for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
-            orUtilization[orId][slot] = 1;
-          }
-        }
-      });
-    });
-    
-    // Calculate overtime (time used outside regular hours)
-    let overtimeMinutes = 0;
-    for (const or of activeORs) {
-      const orCases = blockScheduledCases.filter(s => s.orRoom === or.id);
-      for (const surgeryCase of orCases) {
-        const dayOfSurgery = Math.floor(surgeryCase.scheduledStartTime / 1440);
-        const dayStartMinute = dayOfSurgery * 1440;
-        const surgeryEnd = surgeryCase.scheduledStartTime + surgeryCase.duration;
-        const dayCloseTime = dayStartMinute + or.closeTime;
-        
-        if (surgeryEnd > dayCloseTime) {
-          overtimeMinutes += (surgeryEnd - dayCloseTime);
-        }
-      }
-    }
-    
-    // Add block scheduling results
-    const blockScheduleResults = {
-      blocks: orBlocks,
-      orUtilization: Object.fromEntries(
-        Object.entries(orUtilization).map(([orId, slots]) => {
-          // Calculate utilization percentage
-          const usedSlots = slots.filter(s => s > 0).length;
-          return [orId, usedSlots / slots.length];
-        })
-      ),
-      totalCost: orCosts,
-      overtimeMinutes
-    };
-    
-    // Sort arrivals
-    allArrivals.sort((a, b) => a - b);
-  } else {
-    // Use existing methods for surgery scheduling
-    if (surgeryScheduleType === 'custom' && customSurgeryList && customSurgeryList.length > 0) {
-      // Initialize OR tracking
-      const orRooms = [...new Set(customSurgeryList.map(s => s.orRoom))];
-      orRooms.forEach(room => {
-        orUtilization[room] = new Array(timePoints).fill(0);
-      });
-      
-      // Generate from custom list
-      customSurgeryList.forEach((surgery) => {
-        // Surgery finish time = start + duration
-        const finishTime = surgery.scheduledStartTime + surgery.duration;
-        allArrivals.push(finishTime);
-        
-        // Track OR utilization
-        const startSlot = Math.floor(surgery.scheduledStartTime / timeIncrement);
-        const endSlot = Math.floor(finishTime / timeIncrement);
-        
-        for (let slot = startSlot; slot <= endSlot && slot < timePoints; slot++) {
-          orUtilization[surgery.orRoom][slot] = 1;
-        }
-      });
-    } else {
-      // Use template-based generation
-      for (let day = 0; day < simulationDays; day++) {
-        const dailyArrivals = generateDailySurgeryFinishTimes
