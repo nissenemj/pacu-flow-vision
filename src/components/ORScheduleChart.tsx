@@ -121,7 +121,7 @@ const ORScheduleChart: React.FC<ORScheduleChartProps> = ({
               type="category" 
               dataKey="orRoom" 
               name="Sali"
-              allowDuplication
+              // Removed the unsupported 'allowDuplication' property
               label={{ value: 'Leikkaussali', angle: -90, position: 'insideLeft' }} 
             />
             <ZAxis 
