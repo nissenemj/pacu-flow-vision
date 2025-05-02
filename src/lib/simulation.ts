@@ -1,4 +1,3 @@
-
 import { v4 as uuidv4 } from 'uuid';
 
 export interface SimulationParams {
@@ -234,20 +233,119 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   const averageWaitingTime = waitingTimes.length > 0 ? waitingTimes.reduce((sum, time) => sum + time, 0) / waitingTimes.length : 0;
   const maxWaitingTime = waitingTimes.length > 0 ? Math.max(...waitingTimes) : 0;
   
-  // Create mock data for the new fields
-  const bedOccupancy = Array.from({ length: 24 * 4 }, () => Math.random() * 0.8 + 0.1);
-  const nurseUtilization = Array.from({ length: 24 * 4 }, () => Math.random() * 0.7 + 0.2);
+  // Generate more realistic time-based utilization data
+  const timePoints = 24 * 4; // 15-minute intervals for a day
+  const dayTimePoints = 24 * 4 * params.simulationDays;
+  
+  // Create bed occupancy based on surgery activity and recovery times
+  const bedOccupancy = Array(timePoints).fill(0);
+  const nurseUtilization = Array(timePoints).fill(0);
+  const orUtilizationByRoom: Record<string, number[]> = {};
+  
+  // Initialize OR utilization arrays
+  for (let i = 1; i <= params.numberOfORs; i++) {
+    orUtilizationByRoom[`OR-${i}`] = Array(timePoints).fill(0);
+  }
+  
+  // Calculate occupancy based on surgeries and recovery times
+  surgeryList.forEach(surgery => {
+    const patientClass = params.patientClasses.find(pc => pc.id === surgery.classId);
+    if (!patientClass) return;
+    
+    // Find the day index and convert to 15-minute intervals
+    const dayIndex = Math.floor(surgery.scheduledStartTime / 1440);
+    const dayTime = surgery.scheduledStartTime % 1440; // Minutes since day start
+    const timeIndex = Math.floor(dayTime / 15); // Index for the 15-minute interval
+    
+    // Duration in 15-minute blocks
+    const durationBlocks = Math.ceil(surgery.duration / 15);
+    
+    // Add recovery time based on patient class
+    const recoveryTime = patientClass.averagePacuTime || 0;
+    const recoveryBlocks = Math.ceil(recoveryTime / 15);
+    
+    // Update OR utilization for this surgery's duration
+    const roomName = surgery.orRoom;
+    if (orUtilizationByRoom[roomName]) {
+      for (let i = 0; i < durationBlocks; i++) {
+        const idx = (timeIndex + i) % timePoints;
+        orUtilizationByRoom[roomName][idx] += 0.25; // Add 15 minutes worth of utilization
+      }
+    }
+    
+    // Update bed occupancy for surgery and recovery
+    // For outpatient procedures, we only consider PACU time, not regular bed occupancy
+    if (patientClass.processType !== 'outpatient') {
+      for (let i = 0; i < durationBlocks + recoveryBlocks; i++) {
+        const idx = (timeIndex + i) % timePoints;
+        // Increase occupancy, max 100%
+        bedOccupancy[idx] = Math.min(1, bedOccupancy[idx] + 1 / (params.beds || 10));
+      }
+    } else {
+      // For outpatient, only consider recovery time for bed occupancy
+      for (let i = durationBlocks; i < durationBlocks + recoveryBlocks; i++) {
+        const idx = (timeIndex + i) % timePoints;
+        // Less impact on beds for outpatient
+        bedOccupancy[idx] = Math.min(1, bedOccupancy[idx] + 0.5 / (params.beds || 10));
+      }
+    }
+    
+    // Update nurse utilization based on patient needs
+    const nurseNeeded = patientClass.processType === 'outpatient' ? 0.5 : 1; 
+    for (let i = 0; i < durationBlocks + recoveryBlocks; i++) {
+      const idx = (timeIndex + i) % timePoints;
+      nurseUtilization[idx] = Math.min(1, nurseUtilization[idx] + 
+        nurseNeeded / (params.nurses || 5) / (params.nursePatientRatio || 2));
+    }
+  });
+  
+  // Add some base utilization for nights (lower) and apply some randomness
+  const getNightFactor = (timeIndex: number) => {
+    const hour = Math.floor((timeIndex * 15) / 60);
+    // Lower utilization during night hours (22:00 - 06:00)
+    return (hour >= 22 || hour < 6) ? 0.3 : 1;
+  };
+  
+  // Apply time-of-day patterns and add some noise
+  for (let i = 0; i < timePoints; i++) {
+    const nightFactor = getNightFactor(i);
+    
+    // Add base utilization + noise for beds
+    const baseBedUtilization = 0.1 * nightFactor; // Base bed utilization
+    bedOccupancy[i] = Math.min(1, bedOccupancy[i] + baseBedUtilization + (Math.random() * 0.05));
+    
+    // Add base utilization + noise for nurses
+    const baseNurseUtilization = 0.15 * nightFactor; // Base nurse utilization
+    nurseUtilization[i] = Math.min(1, nurseUtilization[i] + baseNurseUtilization + (Math.random() * 0.05));
+    
+    // OR utilization should be almost zero during night hours
+    Object.keys(orUtilizationByRoom).forEach(room => {
+      if (nightFactor < 1) {
+        orUtilizationByRoom[room][i] *= 0.1; // Minimal OR activity during night hours
+      } else {
+        // Add some random noise during day hours
+        orUtilizationByRoom[room][i] = Math.min(1, orUtilizationByRoom[room][i] + (Math.random() * 0.05));
+      }
+    });
+  }
+  
+  // Calculate average, max values
   const meanBedOccupancy = bedOccupancy.reduce((sum, val) => sum + val, 0) / bedOccupancy.length;
   const maxBedOccupancy = Math.max(...bedOccupancy);
   const meanNurseUtilization = nurseUtilization.reduce((sum, val) => sum + val, 0) / nurseUtilization.length;
   const maxNurseUtilization = Math.max(...nurseUtilization);
-  const p95WaitTime = averageWaitingTime * 1.5; // Mock value
   
-  // Generate mock peak times (times when bed occupancy > 80%)
+  // Calculate 95th percentile of wait time
+  const sortedWaitTimes = [...waitingTimes].sort((a, b) => a - b);
+  const p95Index = Math.floor(sortedWaitTimes.length * 0.95);
+  const p95WaitTime = sortedWaitTimes[p95Index] || averageWaitingTime * 1.5;
+  
+  // Find peak times (times when bed occupancy > 80%)
   const peakTimes = bedOccupancy
     .map((occ, idx) => ({ time: idx, occupancy: occ }))
     .filter(item => item.occupancy > 0.8)
-    .slice(0, 5);
+    .sort((a, b) => b.occupancy - a.occupancy) // Sort by occupancy descending
+    .slice(0, 5); // Top 5 peaks
   
   return {
     surgeryList,
@@ -257,7 +355,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     averageWaitingTime,
     maxWaitingTime,
     totalSurgeries,
-    // Add the new properties
+    // Add the generated data
     meanWaitTime: averageWaitingTime,
     p95WaitTime,
     meanBedOccupancy,
@@ -267,7 +365,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     patientTypeCount: patientClassCounts,
     bedOccupancy,
     nurseUtilization,
-    orUtilization: { 'OR-1': Array.from({ length: 24 * 4 }, () => Math.random() * 0.9) },
+    orUtilization: orUtilizationByRoom,
     peakTimes,
   };
 }
