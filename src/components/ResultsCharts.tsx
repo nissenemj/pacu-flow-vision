@@ -11,7 +11,8 @@ import {
   ResponsiveContainer,
   Legend,
   BarChart,
-  Bar
+  Bar,
+  Cell
 } from 'recharts';
 import { SimulationResults, PatientClass } from '@/lib/simulation';
 
