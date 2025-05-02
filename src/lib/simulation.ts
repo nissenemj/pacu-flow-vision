@@ -55,7 +55,7 @@ export interface Patient {
   surgeryData?: {   // Optional surgery details
     orRoom: string;
     scheduledStart: number;
-    actualStart?: number;
+    actualStart: number; // Removed the question mark from here
     duration: number;
   };
 }
@@ -667,7 +667,7 @@ export function runSimulation(params: SimulationParams): SimulationResults {
           surgeryData: {
             orRoom: surgeryCase.orRoom,
             scheduledStart: surgeryCase.scheduledStartTime,
-            actualStart?: surgeryCase.scheduledStartTime,
+            actualStart: surgeryCase.scheduledStartTime, // Fixed: removed question mark
             duration: surgeryCase.duration
           }
         };
