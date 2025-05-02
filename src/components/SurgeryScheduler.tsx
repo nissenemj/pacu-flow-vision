@@ -225,7 +225,7 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
     }
 
     setSurgeryList(surgeryList.map(surgery =>
-      surgery.id === editedSurgeryId ? editedSurgery : surgery
+      surgery.id === editingSurgeryId ? editedSurgery : surgery
     ));
     setEditingSurgeryId(null);
     setEditedSurgery(null);

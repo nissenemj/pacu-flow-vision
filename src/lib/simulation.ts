@@ -1,3 +1,4 @@
+
 import { v4 as uuidv4 } from 'uuid';
 
 export interface SimulationParams {
@@ -13,6 +14,10 @@ export interface SimulationParams {
   };
   blockScheduleEnabled: boolean;
   orBlocks?: ORBlock[];
+  // Add missing properties used in components
+  beds?: number;
+  nurses?: number;
+  nursePatientRatio?: number;
 }
 
 export interface PatientClass {
@@ -22,6 +27,9 @@ export interface PatientClass {
   priority: number;
   surgeryDurationMean: number;
   surgeryDurationStd?: number;
+  // Add missing properties used in components
+  processType?: 'standard' | 'outpatient' | 'directTransfer';
+  averagePacuTime?: number;
 }
 
 export interface ORBlock {
@@ -53,13 +61,61 @@ export interface SimulationResults {
   averageWaitingTime: number;
   maxWaitingTime: number;
   totalSurgeries: number;
+  // Add missing properties used in components
+  meanWaitTime?: number;
+  p95WaitTime?: number;
+  meanBedOccupancy?: number;
+  maxBedOccupancy?: number;
+  meanNurseUtilization?: number;
+  maxNurseUtilization?: number;
+  patientTypeCount?: Record<string, number>;
+  bedOccupancy?: number[];
+  nurseUtilization?: number[];
+  orUtilization?: Record<string, number[]>;
+  peakTimes?: Array<{time: number, occupancy: number}>;
 }
 
 export const defaultPatientClasses: PatientClass[] = [
-  { id: 'A', name: 'Luokka A', color: '#1f77b4', priority: 1, surgeryDurationMean: 60, surgeryDurationStd: 15 },
-  { id: 'B', name: 'Luokka B', color: '#ff7f0e', priority: 2, surgeryDurationMean: 90, surgeryDurationStd: 20 },
-  { id: 'C', name: 'Luokka C', color: '#2ca02c', priority: 3, surgeryDurationMean: 120, surgeryDurationStd: 30 },
-  { id: 'D', name: 'Luokka D', color: '#d62728', priority: 4, surgeryDurationMean: 180, surgeryDurationStd: 45 },
+  { 
+    id: 'A', 
+    name: 'Luokka A', 
+    color: '#1f77b4', 
+    priority: 1, 
+    surgeryDurationMean: 60, 
+    surgeryDurationStd: 15,
+    processType: 'standard',
+    averagePacuTime: 120
+  },
+  { 
+    id: 'B', 
+    name: 'Luokka B', 
+    color: '#ff7f0e', 
+    priority: 2, 
+    surgeryDurationMean: 90, 
+    surgeryDurationStd: 20,
+    processType: 'standard',
+    averagePacuTime: 150
+  },
+  { 
+    id: 'C', 
+    name: 'Luokka C', 
+    color: '#2ca02c', 
+    priority: 3, 
+    surgeryDurationMean: 120, 
+    surgeryDurationStd: 30,
+    processType: 'outpatient',
+    averagePacuTime: 30
+  },
+  { 
+    id: 'D', 
+    name: 'Luokka D', 
+    color: '#d62728', 
+    priority: 4, 
+    surgeryDurationMean: 180, 
+    surgeryDurationStd: 45,
+    processType: 'directTransfer',
+    averagePacuTime: 0
+  },
 ];
 
 export const defaultSimulationParams: SimulationParams = {
@@ -78,6 +134,10 @@ export const defaultSimulationParams: SimulationParams = {
     averageDailySurgeries: 6,
   },
   blockScheduleEnabled: false,
+  // Add default values for the new properties
+  beds: 10,
+  nurses: 5,
+  nursePatientRatio: 2,
 };
 
 export function generateSurgeryList(
@@ -174,6 +234,21 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   const averageWaitingTime = waitingTimes.length > 0 ? waitingTimes.reduce((sum, time) => sum + time, 0) / waitingTimes.length : 0;
   const maxWaitingTime = waitingTimes.length > 0 ? Math.max(...waitingTimes) : 0;
   
+  // Create mock data for the new fields
+  const bedOccupancy = Array.from({ length: 24 * 4 }, () => Math.random() * 0.8 + 0.1);
+  const nurseUtilization = Array.from({ length: 24 * 4 }, () => Math.random() * 0.7 + 0.2);
+  const meanBedOccupancy = bedOccupancy.reduce((sum, val) => sum + val, 0) / bedOccupancy.length;
+  const maxBedOccupancy = Math.max(...bedOccupancy);
+  const meanNurseUtilization = nurseUtilization.reduce((sum, val) => sum + val, 0) / nurseUtilization.length;
+  const maxNurseUtilization = Math.max(...nurseUtilization);
+  const p95WaitTime = averageWaitingTime * 1.5; // Mock value
+  
+  // Generate mock peak times (times when bed occupancy > 80%)
+  const peakTimes = bedOccupancy
+    .map((occ, idx) => ({ time: idx, occupancy: occ }))
+    .filter(item => item.occupancy > 0.8)
+    .slice(0, 5);
+  
   return {
     surgeryList,
     waitingTimes,
@@ -182,6 +257,18 @@ export function runSimulation(params: SimulationParams): SimulationResults {
     averageWaitingTime,
     maxWaitingTime,
     totalSurgeries,
+    // Add the new properties
+    meanWaitTime: averageWaitingTime,
+    p95WaitTime,
+    meanBedOccupancy,
+    maxBedOccupancy,
+    meanNurseUtilization,
+    maxNurseUtilization,
+    patientTypeCount: patientClassCounts,
+    bedOccupancy,
+    nurseUtilization,
+    orUtilization: { 'OR-1': Array.from({ length: 24 * 4 }, () => Math.random() * 0.9) },
+    peakTimes,
   };
 }
 

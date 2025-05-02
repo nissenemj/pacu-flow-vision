@@ -223,6 +223,8 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
             simulationDays={params.simulationDays}
             onScheduleGenerated={handleSurgeryListGenerated}
             onScheduleTypeChange={handleScheduleTypeChange}
+            blocks={[]} // Pass empty blocks for now
+            blockScheduleEnabled={false} // Disable block scheduling by default
           />
         </TabsContent>
         
