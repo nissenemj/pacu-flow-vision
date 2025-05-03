@@ -1,167 +1,146 @@
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  ResponsiveContainer,
-  ScatterChart,
-  Scatter,
-  XAxis,
-  YAxis,
-  ZAxis,
-  Tooltip,
-  Legend,
-  CartesianGrid
-} from 'recharts';
-import { SurgeryCase, PatientClass } from '@/lib/simulation';
+import { PatientClass, SurgeryCase } from '@/lib/simulation';
+import { Badge } from "@/components/ui/badge";
 
 interface ORScheduleChartProps {
-  surgeryList: SurgeryCase[];
-  patientClasses: PatientClass[];
+  surgeries: SurgeryCase[];
+  orCount?: number;
+  patientClasses?: PatientClass[];
 }
 
-interface FormattedSurgeryCase {
-  id: string;
-  orRoom: string;
-  startTime: number;
-  endTime: number;
-  day: number;
-  hour: number;
-  duration: number;
-  patientClass: string;
-  color: string;
-}
+// Helper function to format time as HH:MM
+const formatTime = (minutes: number): string => {
+  const days = Math.floor(minutes / 1440); // 1440 minutes in a day
+  const dayMinutes = minutes % 1440;
+  const hours = Math.floor(dayMinutes / 60);
+  const mins = Math.floor(dayMinutes % 60);
+  return `D${days+1} ${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+};
 
-const ORScheduleChart: React.FC<ORScheduleChartProps> = ({
-  surgeryList,
-  patientClasses
-}) => {
-  if (!surgeryList || surgeryList.length === 0) {
-    return (
-      <Card className="h-[300px] flex items-center justify-center">
-        <CardContent>
-          <p className="text-center text-muted-foreground">
-            Ei leikkauslistaa näytettäväksi
-          </p>
-        </CardContent>
-      </Card>
-    );
+const ORScheduleChart: React.FC<ORScheduleChartProps> = ({ surgeries, orCount = 5, patientClasses = [] }) => {
+  if (!surgeries || surgeries.length === 0) {
+    return <p>Ei leikkauksia näytettäväksi.</p>;
   }
 
-  // Format data for visualization
-  const formattedData: FormattedSurgeryCase[] = surgeryList.map((surgery) => {
-    const day = Math.floor(surgery.scheduledStartTime / 1440);
-    const dayMinutes = surgery.scheduledStartTime % 1440;
-    const hour = dayMinutes / 60;
-    const endTime = surgery.scheduledStartTime + surgery.duration;
+  // Group surgeries by OR room and sort by start time
+  const orGroupedSurgeries = useMemo(() => {
+    // First, identify all unique OR rooms in the data
+    const allORs = [...new Set(surgeries.map(s => s.orRoom))].sort();
     
-    const patientClass = patientClasses.find(pc => pc.id === surgery.classId);
+    // Group surgeries by OR room
+    const grouped: Record<string, SurgeryCase[]> = {};
+    allORs.forEach(orRoom => {
+      const orSurgeries = surgeries
+        .filter(s => s.orRoom === orRoom && s.orStartTime !== undefined)
+        .sort((a, b) => (a.orStartTime || 0) - (b.orStartTime || 0));
+      
+      if (orSurgeries.length > 0) {
+        grouped[orRoom] = orSurgeries;
+      }
+    });
     
-    return {
-      id: surgery.id,
-      orRoom: surgery.orRoom,
-      startTime: surgery.scheduledStartTime,
-      endTime,
-      day,
-      hour,
-      duration: surgery.duration,
-      patientClass: patientClass?.name || surgery.classId,
-      color: patientClass?.color || "#999999"
-    };
-  });
-  
-  // Group by day to show first 3 days
-  const days = [...new Set(formattedData.map(d => d.day))].sort((a, b) => a - b);
-  const orRooms = [...new Set(formattedData.map(d => d.orRoom))].sort();
-  
-  // Custom tooltip
-  const CustomTooltip = ({ active, payload }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      
-      const startHour = Math.floor((data.startTime % 1440) / 60);
-      const startMinutes = (data.startTime % 1440) % 60;
-      const endHour = Math.floor((data.endTime % 1440) / 60);
-      const endMinutes = (data.endTime % 1440) % 60;
-      
-      return (
-        <div className="bg-white p-2 border rounded shadow-lg">
-          <p className="font-semibold">{data.id}</p>
-          <p>Sali: {data.orRoom}</p>
-          <p>Päivä {data.day + 1}, {`${startHour.toString().padStart(2, '0')}:${startMinutes.toString().padStart(2, '0')}`} - 
-             {`${endHour.toString().padStart(2, '0')}:${endMinutes.toString().padStart(2, '0')}`}</p>
-          <p>Kesto: {Math.round(data.duration / 60 * 10) / 10}h</p>
-          <p>Potilasluokka: {data.patientClass}</p>
-        </div>
-      );
-    }
-    return null;
-  };
+    return grouped;
+  }, [surgeries]);
+
+  // Calculate the overall time range for visualization
+  const timeRange = useMemo(() => {
+    let minTime = Infinity;
+    let maxTime = 0;
+    
+    surgeries.forEach(surgery => {
+      if (surgery.orStartTime !== undefined) {
+        minTime = Math.min(minTime, surgery.orStartTime);
+      }
+      if (surgery.orEndTime !== undefined) {
+        maxTime = Math.max(maxTime, surgery.orEndTime);
+      }
+    });
+    
+    // Add some padding
+    minTime = Math.max(0, minTime - 60);
+    maxTime = maxTime + 60;
+    
+    return { minTime, maxTime, totalDuration: maxTime - minTime };
+  }, [surgeries]);
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-lg">Leikkausaikataulu</CardTitle>
+    <Card className="w-full">
+      <CardHeader>
+        <CardTitle>Leikkaussalien aikataulu</CardTitle>
       </CardHeader>
-      <CardContent className="h-[400px]">
-        <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart
-            margin={{ top: 20, right: 20, bottom: 20, left: 20 }}
-          >
-            <CartesianGrid />
-            <XAxis 
-              type="number" 
-              dataKey="hour" 
-              name="Aika" 
-              domain={[6, 20]} 
-              tickCount={15}
-              tickFormatter={(hour) => `${Math.floor(hour)}:00`}
-              label={{ value: 'Aika', position: 'insideBottom', offset: -5 }}
-            />
-            <YAxis 
-              type="category" 
-              dataKey="orRoom" 
-              name="Sali"
-              // Removed the unsupported 'allowDuplication' property
-              label={{ value: 'Leikkaussali', angle: -90, position: 'insideLeft' }} 
-            />
-            <ZAxis 
-              type="number" 
-              dataKey="duration" 
-              range={[50, 300]} 
-              name="Kesto" 
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend />
-            {
-              days.slice(0, 3).map((day, idx) => (
-                <Scatter 
-                  key={day}
-                  name={`Päivä ${day + 1}`} 
-                  data={formattedData.filter(d => d.day === day)}
-                  fill="#8884d8"
-                  shape={(props: any) => {
-                    const { cx, cy, width, height, payload } = props;
-                    // Calculate width based on duration
-                    const durationWidth = (payload.duration / 60) * 40; // scale factor
-                    
-                    return (
-                      <rect
-                        x={cx - 4}
-                        y={cy - 10}
-                        width={durationWidth > 10 ? durationWidth : 10}
-                        height={20}
-                        fill={payload.color}
-                        opacity={0.7}
-                        rx={4}
-                        ry={4}
-                      />
-                    );
-                  }}
-                />
-              ))
-            }
-          </ScatterChart>
-        </ResponsiveContainer>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <div className="min-w-[800px]">
+            {Object.entries(orGroupedSurgeries).map(([orRoom, orSurgeries]) => (
+              <div key={orRoom} className="mb-8">
+                <h3 className="font-bold text-lg mb-2">{orRoom}</h3>
+                <div className="space-y-2">
+                  {/* Time scale */}
+                  <div className="relative h-6 border-b border-gray-300">
+                    {Array.from({ length: 7 }).map((_, i) => {
+                      const position = (i * (timeRange.totalDuration / 6)) / timeRange.totalDuration * 100;
+                      const timeValue = timeRange.minTime + (i * (timeRange.totalDuration / 6));
+                      return (
+                        <div 
+                          key={i} 
+                          className="absolute bottom-0 transform -translate-x-1/2"
+                          style={{ left: `${position}%` }}
+                        >
+                          <div className="h-2 w-0.5 bg-gray-300"></div>
+                          <div className="text-xs text-gray-600">{formatTime(timeValue)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Surgeries for this OR */}
+                  <div className="relative h-16 bg-gray-50 rounded">
+                    {orSurgeries.map(surgery => {
+                      const orStart = surgery.orStartTime || 0;
+                      const orEnd = surgery.orEndTime || orStart;
+                      const startPos = ((orStart - timeRange.minTime) / timeRange.totalDuration) * 100;
+                      const width = ((orEnd - orStart) / timeRange.totalDuration) * 100;
+                      
+                      const patientClass = patientClasses.find(pc => pc.id === surgery.classId);
+                      const backgroundColor = patientClass?.color || '#888';
+                      
+                      return (
+                        <div 
+                          key={surgery.id}
+                          className="absolute top-0 h-full rounded shadow-sm border flex items-center justify-center"
+                          style={{ 
+                            left: `${startPos}%`, 
+                            width: `${width}%`,
+                            backgroundColor,
+                            borderColor: backgroundColor
+                          }}
+                          title={`${surgery.id}: ${formatTime(orStart)} - ${formatTime(orEnd)}`}
+                        >
+                          <span className="text-white text-xs truncate px-1">
+                            {patientClass?.name || surgery.classId}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
+            
+            {/* Legend for patient classes */}
+            {patientClasses.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-4">
+                {patientClasses.map(pc => (
+                  <Badge key={pc.id} style={{ backgroundColor: pc.color }} variant="outline">
+                    {pc.name}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

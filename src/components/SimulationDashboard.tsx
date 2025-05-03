@@ -7,9 +7,17 @@ import {
   SurgeryCase,
   ORBlock,
   PatientClass,
-  scheduleCasesInBlocks
+  scheduleCasesInBlocks,
+  generateSurgeryListTemplate,
+  SurgeryCaseInput
 } from '@/lib/simulation';
+import { 
+  optimizeSchedule, 
+  OptimizationParams, 
+  OptimizationResult 
+} from '@/lib/optimizer';
 import { toast } from '@/components/ui/use-toast';
+import { v4 as uuidv4 } from 'uuid';
 import SimulationParameters from './SimulationParameters';
 import ResultsCharts from './ResultsCharts';
 import ORScheduleChart from './ORScheduleChart';
@@ -18,10 +26,13 @@ import BlockScheduler from './BlockScheduler';
 import SurgeryScheduler from './SurgeryScheduler';
 import ScenarioManager from './ScenarioManager';
 import ReportExport from './ReportExport';
+import OptimizationSettings from './OptimizationSettings';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
 
 // Block interface that extends ORBlock for UI components
 interface Block extends ORBlock {
@@ -36,11 +47,19 @@ const convertBlockToORBlock = (block: Block): ORBlock => {
     orId: block.orId,
     start: block.start,
     end: block.end,
-    allowedClasses: block.allowedProcedures, // Use allowedProcedures for compatibility
+    allowedClasses: block.allowedProcedures,
     day: block.day,
     label: block.label,
-    allowedProcedures: block.allowedProcedures
   };
+};
+
+const defaultOptimizationParams: OptimizationParams = {
+  alpha: 1.0,
+  beta: 0.5,
+  gamma: 0.1,
+  maxIterations: 500,
+  initialTemperature: 1000,
+  coolingRate: 0.98,
 };
 
 const SimulationDashboard: React.FC = () => {
@@ -51,15 +70,21 @@ const SimulationDashboard: React.FC = () => {
   
   const [results, setResults] = useState<SimulationResults | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizationProgress, setOptimizationProgress] = useState(0);
   const [activeTab, setActiveTab] = useState("simulator");
   const [resultTab, setResultTab] = useState("metrics");
   const [activeConfigTab, setActiveConfigTab] = useState("parameters");
   
   // New states for integrating BlockScheduler and SurgeryScheduler
   const [blocks, setBlocks] = useState<Block[]>([]);
-  const [surgeryList, setSurgeryList] = useState<SurgeryCase[]>([]);
+  const [surgeryList, setSurgeryList] = useState<SurgeryCaseInput[]>([]);
   const [scheduleType, setScheduleType] = useState<'template' | 'custom'>('template');
   const [blockScheduleEnabled, setBlockScheduleEnabled] = useState(true);
+  
+  // State for optimization parameters
+  const [optParams, setOptParams] = useState<OptimizationParams>(defaultOptimizationParams);
+  const [optimizationResults, setOptimizationResults] = useState<OptimizationResult | null>(null);
 
   const handleParamChange = useCallback((key: string, value: any) => {
     setParams((prev) => {
@@ -116,6 +141,11 @@ const SimulationDashboard: React.FC = () => {
         patientClassDistribution: newDistribution
       };
     });
+  }, []);
+
+  // Handle optimization parameter changes
+  const handleOptParamChange = useCallback((key: keyof OptimizationParams, value: any) => {
+    setOptParams(prev => ({ ...prev, [key]: value }));
   }, []);
 
   // Handle block schedule changes
@@ -178,7 +208,7 @@ const SimulationDashboard: React.FC = () => {
   }, [params.patientClasses, params.patientClassDistribution, params.simulationDays]);
   
   // Handle surgery list changes from SurgeryScheduler
-  const handleSurgeryListChange = useCallback((newSurgeryList: SurgeryCase[], type: 'template' | 'custom') => {
+  const handleSurgeryListChange = useCallback((newSurgeryList: SurgeryCaseInput[], type: 'template' | 'custom') => {
     setSurgeryList(newSurgeryList);
     setScheduleType(type);
     
@@ -195,7 +225,7 @@ const SimulationDashboard: React.FC = () => {
   }, [blocks, blockScheduleEnabled]);
   
   // Validate surgeries against blocks
-  const validateSurgeriesAgainstBlocks = (surgeries: SurgeryCase[], blocksToValidate: Block[]) => {
+  const validateSurgeriesAgainstBlocks = (surgeries: SurgeryCaseInput[], blocksToValidate: Block[]) => {
     let invalidSurgeries = 0;
     const orBlocks = blocksToValidate.map(convertBlockToORBlock);
     
@@ -207,7 +237,9 @@ const SimulationDashboard: React.FC = () => {
       // Calculate surgery day and time
       const surgeryDay = Math.floor(surgery.scheduledStartTime / 1440); // 1440 minutes in a day
       const surgeryStartTime = surgery.scheduledStartTime % 1440; // Time within the day
-      const surgeryEndTime = surgeryStartTime + surgery.duration;
+      // Use provided duration or estimate from patient class
+      const duration = surgery.duration ?? Math.round(patientClass.surgeryDurationMean);
+      const surgeryEndTime = surgeryStartTime + duration;
       
       // Find matching block for this surgery
       const matchingBlock = orBlocks.find(block => {
@@ -277,29 +309,105 @@ const SimulationDashboard: React.FC = () => {
     }, 100);
   }, [params, blockScheduleEnabled, blocks, scheduleType, surgeryList]);
 
+  // Run optimization
+  const runOptimizationHandler = useCallback(() => {
+    setIsOptimizing(true);
+    setOptimizationProgress(0);
+    
+    setTimeout(() => {
+      try {
+        // Generate initial schedule if needed
+        let initialSchedule: SurgeryCaseInput[];
+        
+        if (scheduleType === 'template' || surgeryList.length === 0) {
+          if (blockScheduleEnabled && blocks.length > 0) {
+            initialSchedule = scheduleCasesInBlocks(
+              blocks.map(convertBlockToORBlock), 
+              params.patientClasses, 
+              params.patientClassDistribution, 
+              params.simulationDays
+            );
+          } else {
+            initialSchedule = generateSurgeryListTemplate(params);
+          }
+        } else {
+          initialSchedule = surgeryList;
+        }
+        
+        // Ensure each surgery has an ID for tracking
+        initialSchedule = initialSchedule.map(surgery => ({
+          ...surgery,
+          id: surgery.id || `S-${uuidv4().substring(0, 8)}`
+        }));
+        
+        // Setup simulation parameters for optimization
+        const simulationParams = {
+          ...params,
+          blockScheduleEnabled: blockScheduleEnabled,
+          orBlocks: blocks.map(convertBlockToORBlock),
+          surgeryScheduleType: 'custom' as const, // Always use custom for optimization
+        };
+        
+        // Run optimization
+        const optResult = optimizeSchedule(initialSchedule, simulationParams, optParams);
+        
+        // Update state with results
+        setOptimizationResults(optResult);
+        setResults(optResult.bestSimulationResults || null);
+        
+        // Update surgery list with optimized schedule
+        setSurgeryList(optResult.bestSchedule);
+        setScheduleType('custom');
+        
+        // Update params to reflect the optimized schedule
+        setParams(prev => ({
+          ...prev,
+          surgeryScheduleType: 'custom',
+          customSurgeryList: optResult.bestSchedule
+        }));
+        
+        toast({
+          title: "Optimointi valmis",
+          description: `Paras pistemäärä: ${optResult.bestScore.toFixed(2)}, alkuperäinen: ${optResult.initialScore.toFixed(2)}`
+        });
+        
+        // Switch to results view
+        setResultTab("metrics");
+        
+      } catch (error) {
+        console.error("Optimization error:", error);
+        toast({
+          title: "Virhe optimoinnissa",
+          description: `Optimoinnissa tapahtui virhe: ${error}`,
+          variant: "destructive"
+        });
+      } finally {
+        setIsOptimizing(false);
+        setOptimizationProgress(100);
+      }
+    }, 100);
+  }, [params, optParams, blockScheduleEnabled, blocks, scheduleType, surgeryList]);
+
   // Load a scenario from ScenarioManager
-  const handleLoadScenario = useCallback((scenario: { params: SimulationParams, results: SimulationResults | null }) => {
+  const handleLoadScenario = useCallback((scenario: { 
+    params: SimulationParams, 
+    results: SimulationResults | null,
+    optParams?: OptimizationParams,
+    blocks?: Block[],
+    surgeryList?: SurgeryCaseInput[],
+    scheduleType?: 'template' | 'custom'
+  }) => {
     setParams(scenario.params);
     setResults(scenario.results);
     setActiveTab("simulator");
     
-    // Update blocks and surgery list from the scenario
-    if (scenario.params.orBlocks) {
-      const loadedBlocks: Block[] = scenario.params.orBlocks.map(block => ({
-        ...block,
-        label: block.label || `Blokki ${block.id}`,
-        allowedProcedures: block.allowedClasses || []
-      }));
-      setBlocks(loadedBlocks);
-      setBlockScheduleEnabled(scenario.params.blockScheduleEnabled || false);
-    }
+    // Update additional state from the scenario
+    if (scenario.optParams) setOptParams(scenario.optParams);
+    if (scenario.blocks) setBlocks(scenario.blocks);
+    if (scenario.surgeryList) setSurgeryList(scenario.surgeryList);
+    if (scenario.scheduleType) setScheduleType(scenario.scheduleType);
     
-    if (scenario.params.customSurgeryList) {
-      setSurgeryList(scenario.params.customSurgeryList);
-      setScheduleType('custom');
-    } else {
-      setScheduleType('template');
-    }
+    setBlockScheduleEnabled(scenario.params.blockScheduleEnabled || false);
     
     toast({
       title: "Skenaario ladattu",
@@ -320,6 +428,7 @@ const SimulationDashboard: React.FC = () => {
         <div className="flex justify-between items-center mb-4">
           <TabsList>
             <TabsTrigger value="simulator">Simulaattori</TabsTrigger>
+            <TabsTrigger value="optimizer">Optimointi</TabsTrigger>
             <TabsTrigger value="scenarios">Skenaariot</TabsTrigger>
             <TabsTrigger value="reports">Raportit</TabsTrigger>
             <TabsTrigger value="guide">Ohjeet</TabsTrigger>
@@ -449,12 +558,13 @@ const SimulationDashboard: React.FC = () => {
                 </TabsList>
                 
                 <TabsContent value="metrics" className="pt-4">
-                  <ResultsCharts results={results} patientClasses={params.patientClasses} />
+                  <ResultsCharts results={results} params={params} />
                 </TabsContent>
                 
                 <TabsContent value="schedule" className="pt-4">
                   <ORScheduleChart 
-                    surgeryList={params.customSurgeryList || []} 
+                    surgeries={results.completedSurgeries} 
+                    orCount={params.numberOfORs}
                     patientClasses={params.patientClasses}
                   />
                 </TabsContent>
@@ -476,14 +586,14 @@ const SimulationDashboard: React.FC = () => {
                               const blockCount = params.orBlocks?.filter(
                                 b => {
                                   // Use both allowedClasses and allowedProcedures for compatibility
-                                  const allowedPatients = b.allowedProcedures || b.allowedClasses;
+                                  const allowedPatients = b.allowedClasses;
                                   return allowedPatients.includes(pc.id);
                                 }
                               ).length || 0;
                               
                               // Calculate total hours for this class
                               const totalHours = params.orBlocks?.reduce((sum, block) => {
-                                const allowedPatients = block.allowedProcedures || block.allowedClasses;
+                                const allowedPatients = block.allowedClasses;
                                 if (allowedPatients.includes(pc.id)) {
                                   return sum + (block.end - block.start) / 60;
                                 }
@@ -517,7 +627,7 @@ const SimulationDashboard: React.FC = () => {
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                               {params.orBlocks.map(block => {
                                 const allowedPatientClasses = params.patientClasses.filter(pc => 
-                                  (block.allowedProcedures || block.allowedClasses).includes(pc.id)
+                                  block.allowedClasses.includes(pc.id)
                                 );
                                 
                                 return (
@@ -552,7 +662,7 @@ const SimulationDashboard: React.FC = () => {
                 
                 <TabsContent value="gantt" className="pt-4">
                   <GanttChart 
-                    surgeryList={params.customSurgeryList || []}
+                    surgeries={results.completedSurgeries}
                     patientClasses={params.patientClasses}
                   />
                 </TabsContent>
@@ -569,10 +679,87 @@ const SimulationDashboard: React.FC = () => {
           )}
         </TabsContent>
         
+        <TabsContent value="optimizer" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Optimointiasetukset</CardTitle>
+              <CardDescription>
+                Määritä parametrit leikkauslistan optimointialgoritmille
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <OptimizationSettings 
+                optParams={optParams} 
+                onOptParamChange={handleOptParamChange} 
+              />
+              
+              <div className="mt-6 flex justify-end">
+                <Button
+                  onClick={runOptimizationHandler}
+                  disabled={isOptimizing}
+                  className="bg-medical-blue text-white"
+                >
+                  {isOptimizing ? 'Optimointi käynnissä...' : 'Käynnistä optimointi'}
+                </Button>
+              </div>
+              
+              {isOptimizing && (
+                <Progress value={optimizationProgress} className="mt-4" />
+              )}
+            </CardContent>
+          </Card>
+          
+          {optimizationResults && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Optimoinnin tulokset</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Alkuperäinen pistemäärä</h4>
+                    <div className="text-2xl font-bold">{optimizationResults.initialScore.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Paras pistemäärä</h4>
+                    <div className="text-2xl font-bold">{optimizationResults.bestScore.toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium mb-1">Parannus</h4>
+                    <div className="text-2xl font-bold">
+                      {((optimizationResults.initialScore - optimizationResults.bestScore) / 
+                       optimizationResults.initialScore * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-sm text-muted-foreground mb-4">
+                  Optimoitu leikkauslista on nyt käytettävissä simulaattorissa. Voit tarkastella tuloksia 
+                  simulaatio-välilehdellä ja leikkauslistaa leikkauslista-välilehdellä.
+                </p>
+                
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setActiveTab('simulator');
+                    setActiveConfigTab('surgery-list');
+                  }}
+                >
+                  Näytä optimoitu leikkauslista
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+        
         <TabsContent value="scenarios">
           <ScenarioManager 
             currentParams={params}
             currentResults={results}
+            currentOptParams={optParams}
+            currentBlocks={blocks}
+            currentSurgeryList={surgeryList}
+            currentScheduleType={scheduleType}
             onLoadScenario={handleLoadScenario}
           />
         </TabsContent>

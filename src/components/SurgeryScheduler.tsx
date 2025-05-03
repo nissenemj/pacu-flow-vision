@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -14,17 +15,19 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { toast } from '@/components/ui/use-toast';
-import { SurgeryCase, PatientClass, ORBlock } from '@/lib/simulation';
+import { SurgeryCase, PatientClass, ORBlock, SurgeryCaseInput } from '@/lib/simulation';
 import { Plus, Edit, Trash, Save, X } from 'lucide-react';
 
 interface SurgerySchedulerProps {
   patientClasses: PatientClass[];
   patientDistribution: Record<string, number>;
   simulationDays: number;
-  onScheduleGenerated: (surgeryList: SurgeryCase[], type: 'template' | 'custom') => void;
+  onScheduleGenerated: (surgeryList: SurgeryCaseInput[], type: 'template' | 'custom') => void;
   onScheduleTypeChange: (type: 'template' | 'custom') => void;
   blocks: ORBlock[];
   blockScheduleEnabled: boolean;
+  initialSchedule?: SurgeryCaseInput[];
+  initialScheduleType?: 'template' | 'custom';
 }
 
 const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
@@ -34,25 +37,37 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
   onScheduleGenerated,
   onScheduleTypeChange,
   blocks,
-  blockScheduleEnabled
+  blockScheduleEnabled,
+  initialSchedule = [],
+  initialScheduleType = 'template'
 }) => {
-  const [surgeryList, setSurgeryList] = useState<SurgeryCase[]>([]);
-  const [scheduleType, setScheduleType] = useState<'template' | 'custom'>('template');
-  const [newSurgery, setNewSurgery] = useState<Omit<SurgeryCase, 'id'>>({
+  const [surgeryList, setSurgeryList] = useState<SurgeryCaseInput[]>(initialSchedule);
+  const [scheduleType, setScheduleType] = useState<'template' | 'custom'>(initialScheduleType);
+  const [newSurgery, setNewSurgery] = useState<SurgeryCaseInput>({
     classId: patientClasses[0]?.id || '',
     scheduledStartTime: 0,
     duration: 60,
     orRoom: 'OR-1',
     priority: 3,
-    arrivalTime: 0
+    actualArrivalTime: 0
   });
   const [editingSurgeryId, setEditingSurgeryId] = useState<string | null>(null);
-  const [editedSurgery, setEditedSurgery] = useState<SurgeryCase | null>(null);
+  const [editedSurgery, setEditedSurgery] = useState<SurgeryCaseInput | null>(null);
 
   // Update parent component when surgery list changes
   useEffect(() => {
     onScheduleGenerated(surgeryList, scheduleType);
   }, [surgeryList, scheduleType, onScheduleGenerated]);
+
+  // Initialize with initialSchedule when provided
+  useEffect(() => {
+    if (initialSchedule?.length > 0) {
+      setSurgeryList(initialSchedule);
+    }
+    if (initialScheduleType) {
+      setScheduleType(initialScheduleType);
+    }
+  }, [initialSchedule, initialScheduleType]);
 
   // Handle schedule type change
   const handleTypeChange = (type: 'template' | 'custom') => {
@@ -76,17 +91,16 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
     const isOverlapping = surgeryList.some(surgery => {
       return (
         surgery.orRoom === newSurgery.orRoom &&
-        surgery.scheduledStartTime < newSurgery.scheduledStartTime + newSurgery.duration &&
-        surgery.scheduledStartTime + surgery.duration > newSurgery.scheduledStartTime
+        surgery.scheduledStartTime < newSurgery.scheduledStartTime + (newSurgery.duration || 0) &&
+        (surgery.scheduledStartTime + (surgery.duration || 0)) > newSurgery.scheduledStartTime
       );
     });
 
     if (isOverlapping) {
-      // warning-variant korjaaminen
       toast({
         title: "Validointivirhe",
         description: `Leikkaus päällekkäinen: ${newSurgery.classId}`,
-        variant: "destructive"  // Muutettu warning -> destructive
+        variant: "destructive"
       });
       return;
     }
@@ -98,7 +112,7 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
       // Calculate surgery day and time
       const surgeryDay = Math.floor(newSurgery.scheduledStartTime / 1440); // 1440 minutes in a day
       const surgeryStartTime = newSurgery.scheduledStartTime % 1440; // Time within the day
-      const surgeryEndTime = surgeryStartTime + newSurgery.duration;
+      const surgeryEndTime = surgeryStartTime + (newSurgery.duration || 0);
       
       // Find matching block for this surgery
       const matchingBlock = orBlocks.find(block => {
@@ -110,18 +124,17 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
       });
       
       if (!matchingBlock) {
-        // warning-variant korjaaminen
         toast({
           title: "Blokkisääntövirhe",
           description: `Leikkaus '${newSurgery.classId}' ei sovi yhteenkään määriteltyyn blokkiin.`,
-          variant: "destructive"  // Muutettu warning -> destructive
+          variant: "destructive"
         });
         return;
       }
     }
 
     const newId = `S-${surgeryList.length + 1}`;
-    const surgeryToAdd: SurgeryCase = {
+    const surgeryToAdd: SurgeryCaseInput = {
       id: newId,
       ...newSurgery
     };
@@ -132,7 +145,7 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
       duration: 60,
       orRoom: 'OR-1',
       priority: 3,
-      arrivalTime: 0
+      actualArrivalTime: 0
     });
 
     toast({
@@ -152,7 +165,7 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
   };
 
   // Start editing a surgery
-  const handleEditSurgery = (surgery: SurgeryCase) => {
+  const handleEditSurgery = (surgery: SurgeryCaseInput) => {
     setEditingSurgeryId(surgery.id);
     setEditedSurgery(surgery);
   };
@@ -182,8 +195,8 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
       return (
         surgery.id !== editedSurgery.id &&
         surgery.orRoom === editedSurgery.orRoom &&
-        surgery.scheduledStartTime < editedSurgery.scheduledStartTime + editedSurgery.duration &&
-        surgery.scheduledStartTime + surgery.duration > editedSurgery.scheduledStartTime
+        surgery.scheduledStartTime < editedSurgery.scheduledStartTime + (editedSurgery.duration || 0) &&
+        (surgery.scheduledStartTime + (surgery.duration || 0)) > editedSurgery.scheduledStartTime
       );
     });
 
@@ -203,7 +216,7 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
       // Calculate surgery day and time
       const surgeryDay = Math.floor(editedSurgery.scheduledStartTime / 1440); // 1440 minutes in a day
       const surgeryStartTime = editedSurgery.scheduledStartTime % 1440; // Time within the day
-      const surgeryEndTime = surgeryStartTime + editedSurgery.duration;
+      const surgeryEndTime = surgeryStartTime + (editedSurgery.duration || 0);
       
       // Find matching block for this surgery
       const matchingBlock = orBlocks.find(block => {
@@ -344,7 +357,7 @@ const SurgeryScheduler: React.FC<SurgerySchedulerProps> = ({
                           <Button size="sm" variant="ghost" onClick={() => handleEditSurgery(surgery)}>
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleRemoveSurgery(surgery.id)}>
+                          <Button size="sm" variant="ghost" onClick={() => handleRemoveSurgery(surgery.id || '')}>
                             <Trash className="h-4 w-4" />
                           </Button>
                         </div>

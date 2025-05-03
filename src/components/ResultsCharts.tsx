@@ -1,308 +1,376 @@
 
 import React from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer,
-  Legend,
-  BarChart,
-  Bar,
-  Cell,
-  AreaChart,
-  Area
+  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
+  Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell 
 } from 'recharts';
-import { SimulationResults, PatientClass } from '@/lib/simulation';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SimulationResults, PatientClass, SimulationParams } from '@/lib/simulation';
 
 interface ResultsChartsProps {
-  results: SimulationResults | null;
-  patientClasses: PatientClass[];
+  results: SimulationResults;
+  params: SimulationParams;
+  chartType?: 'metrics' | 'occupancy';
 }
 
-const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, patientClasses }) => {
-  if (!results) {
-    return (
-      <Card className="h-[350px] flex items-center justify-center">
-        <CardContent>
-          <p className="text-center text-muted-foreground">
-            Aja simulaatio nähdäksesi tulokset
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // Transform data for time-based charts
-  const timeSeriesData = [];
-  const numPoints = Math.min(
-    results.bedOccupancy?.length || 0, 
-    results.nurseUtilization?.length || 0
-  );
+const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, params, chartType = 'metrics' }) => {
+  if (!results) return <div>No results to display.</div>;
   
-  for (let i = 0; i < numPoints; i++) {
-    const dataPoint: any = {
-      time: `${Math.floor(i / 4)}:${(i % 4) * 15 === 0 ? '00' : (i % 4) * 15}`,
-      bedOccupancy: Number(((results.bedOccupancy?.[i] || 0) * 100).toFixed(1)),
-      nurseUtilization: Number(((results.nurseUtilization?.[i] || 0) * 100).toFixed(1))
-    };
-    
-    // Add OR utilization if available
-    if (results.orUtilization) {
-      Object.keys(results.orUtilization).forEach(orRoom => {
-        if (i < (results.orUtilization?.[orRoom]?.length || 0)) {
-          dataPoint[`or_${orRoom}`] = (results.orUtilization?.[orRoom]?.[i] || 0) * 100;
-        }
+  // Helper to convert time series data to 24-hour format for charts
+  const formatTimeSeriesFor24HourView = (data: Array<{time: number, count: number}>) => {
+    const formattedData = [];
+    // Initialize with 0 counts for all hours
+    for (let hour = 0; hour < 24; hour++) {
+      formattedData.push({
+        hour,
+        count: 0,
+        label: `${hour}:00`,
       });
     }
     
-    timeSeriesData.push(dataPoint);
-  }
-
-  // Create patient distribution data
-  const patientDistributionData = patientClasses.map(pc => ({
-    name: pc.name,
-    count: results.patientTypeCount?.[pc.id] || 0,
-    fill: pc.color
-  }));
-  
-  // Create wait time distribution data
-  const waitTimeBuckets: Record<string, number> = {
-    '0-15 min': 0,
-    '15-30 min': 0,
-    '30-60 min': 0,
-    '1-2 h': 0,
-    '2+ h': 0
+    // Process data to fit into 24-hour buckets (fold multi-day data into 24-hour view)
+    for (const point of data) {
+      const hour = Math.floor(point.time / 60) % 24; // Convert minutes to hours, mod 24
+      if (formattedData[hour]) {
+        // Average or max? Using max for peak visualization
+        formattedData[hour].count = Math.max(formattedData[hour].count, point.count);
+      }
+    }
+    
+    return formattedData;
   };
-  
-  // Use waitingTimes instead of waitTimes and add null check
-  const waitingTimes = results.waitingTimes || [];
-  waitingTimes.forEach(waitTime => {
-    if (waitTime < 15) waitTimeBuckets['0-15 min']++;
-    else if (waitTime < 30) waitTimeBuckets['15-30 min']++;
-    else if (waitTime < 60) waitTimeBuckets['30-60 min']++;
-    else if (waitTime < 120) waitTimeBuckets['1-2 h']++;
-    else waitTimeBuckets['2+ h']++;
-  });
-  
-  const waitTimeData = Object.entries(waitTimeBuckets).map(([range, count]) => ({
-    range,
-    count,
-    percentage: Number((count / (waitingTimes.length || 1) * 100).toFixed(1))
-  }));
-  
-  // Format peak occupancy data if available
-  const peakOccupancyData = results.peakTimes 
-    ? results.peakTimes.map(peak => {
-        const day = Math.floor(peak.time / 1440);
-        const dayMinutes = peak.time % 1440;
-        const hour = Math.floor(dayMinutes / 60);
-        const minute = dayMinutes % 60;
-        return {
-          time: peak.time,
-          formattedTime: `D${day+1} ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
-          occupancy: Math.round(peak.occupancy * 100)
-        };
-      })
-    : [];
 
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
+  // Process nurse utilization data for 24-hour view
+  const processNurseData = () => {
+    if (!results.nurseUtilizationData || !results.nurseUtilizationData.length) {
+      return [];
+    }
+    
+    const formattedData = [];
+    for (let hour = 0; hour < 24; hour++) {
+      formattedData.push({
+        hour,
+        utilization: 0, 
+        label: `${hour}:00`,
+      });
+    }
+    
+    // Process nurse utilization data
+    for (const point of results.nurseUtilizationData) {
+      const hour = Math.floor(point.time / 60) % 24;
+      const utilization = point.busyCount / params.staffParams.totalNurses;
+      if (formattedData[hour]) {
+        formattedData[hour].utilization = Math.max(formattedData[hour].utilization, utilization);
+      }
+    }
+    
+    return formattedData;
+  };
+
+  // Process bed occupancy data
+  const pacu1Data = formatTimeSeriesFor24HourView(results.pacuPhase1OccupancyData || []);
+  const pacu2Data = formatTimeSeriesFor24HourView(results.pacuPhase2OccupancyData || []);
+  const wardData = formatTimeSeriesFor24HourView(results.wardOccupancyData || []);
+  const nurseData = processNurseData();
+
+  // Prepare data for OR utilization pie chart
+  const orUtilizationData = Object.entries(results.orUtilization || {}).map(([key, value]) => ({
+    name: key,
+    value: value * 100 // Convert to percentage
+  }));
+
+  // Colors for charts
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#A4DE02', '#8884D8'];
+
+  const renderMetricsCharts = () => (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Keskimääräinen OR-odotusaika</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{Math.round(results.meanORWaitingTime)} min</div>
+            <p className="text-xs text-muted-foreground">P95: {Math.round(results.p95ORWaitingTime)} min</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Keskimääräinen PACU-aika</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{Math.round(results.meanPacuTime)} min</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Keskimääräinen osastosiirtoviive</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{Math.round(results.meanWardTransferDelay)} min</div>
+            <p className="text-xs text-muted-foreground">P95: {Math.round(results.p95WardTransferDelay)} min</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">PACU-estoaika</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{Math.round(results.pacuBlockedTimeRatio * 100)}%</div>
+            <p className="text-xs text-muted-foreground">Potilaat odottavat osastopaikkaa</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>OR-käyttöaste</CardTitle>
+          </CardHeader>
+          <CardContent className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={orUtilizationData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                  label={({ name, value }) => `${name}: ${value.toFixed(1)}%`}
+                >
+                  {orUtilizationData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value) => [`${value.toFixed(1)}%`, 'Käyttöaste']} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Keskimääräinen käyttöaste</CardTitle>
+          </CardHeader>
+          <CardContent className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={[
+                  { name: 'PACU P1', value: results.meanPacuPhase1BedOccupancy * 100 },
+                  { name: 'PACU P2', value: results.meanPacuPhase2BedOccupancy * 100 },
+                  { name: 'Ward', value: results.meanWardBedOccupancy * 100 },
+                  { name: 'Nurses', value: results.meanNurseUtilization * 100 }
+                ]}
+                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis 
+                  label={{ value: '%', angle: -90, position: 'insideLeft' }} 
+                  domain={[0, 100]} 
+                />
+                <Tooltip formatter={(value) => [`${value.toFixed(1)}%`, 'Käyttöaste']} />
+                <Bar dataKey="value" fill="#8884d8">
+                  {[
+                    <Cell key="pacu1" fill="#0088FE" />,
+                    <Cell key="pacu2" fill="#00C49F" />,
+                    <Cell key="ward" fill="#FFBB28" />,
+                    <Cell key="nurses" fill="#FF8042" />
+                  ]}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Resurssien käyttö</CardTitle>
+        <CardHeader>
+          <CardTitle>Potilasvirtaus</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <h4 className="font-medium mb-2">Valmistuneet leikkaukset</h4>
+              <div className="text-3xl font-bold">{results.completedSurgeries.length}</div>
+            </div>
+            <div>
+              <h4 className="font-medium mb-2">Peruutetut leikkaukset</h4>
+              <div className="text-3xl font-bold">{results.cancelledSurgeries.length}</div>
+            </div>
+          </div>
+
+          <h4 className="font-medium mb-2">Potilasluokat</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {params.patientClasses.map((pc) => {
+              const count = results.completedSurgeries.filter(
+                (s) => s.classId === pc.id
+              ).length;
+              return (
+                <div key={pc.id} className="flex items-center space-x-2">
+                  <div
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: pc.color }}
+                  ></div>
+                  <span>{pc.name}: </span>
+                  <span className="font-bold">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Kustannukset</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div>
+                <h4 className="font-medium mb-2">Kokonaiskustannus</h4>
+                <div className="text-3xl font-bold">
+                  {new Intl.NumberFormat('fi-FI', { style: 'currency', currency: 'EUR' }).format(results.totalCost || 0)}
+                </div>
+              </div>
+              <div>
+                <h4 className="font-medium mb-2">Kustannus / suoritettu leikkaus</h4>
+                <div className="text-3xl font-bold">
+                  {results.completedSurgeries.length ? new Intl.NumberFormat('fi-FI', { style: 'currency', currency: 'EUR' }).format(
+                    (results.totalCost || 0) / results.completedSurgeries.length
+                  ) : '€0.00'}
+                </div>
+              </div>
+            </div>
+            
+            {results.costBreakdown && (
+              <div className="mt-6">
+                <h4 className="font-medium mb-4">Kustannuserittely</h4>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart
+                    data={[
+                      { name: 'OR', value: results.costBreakdown.orCost },
+                      { name: 'PACU P1', value: results.costBreakdown.pacu1Cost },
+                      { name: 'PACU P2', value: results.costBreakdown.pacu2Cost },
+                      { name: 'Hoitajat', value: results.costBreakdown.nurseCost },
+                      { name: 'Osastot', value: results.costBreakdown.wardCost },
+                      { name: 'Peruutukset', value: results.costBreakdown.cancellationCost }
+                    ]}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis 
+                      label={{ value: '€', angle: -90, position: 'insideLeft' }}
+                    />
+                    <Tooltip formatter={(value) => [`€${value.toFixed(2)}`, 'Kustannus']} />
+                    <Bar dataKey="value" fill="#8884d8">
+                      {[
+                        <Cell key="or" fill="#0088FE" />,
+                        <Cell key="pacu1" fill="#00C49F" />,
+                        <Cell key="pacu2" fill="#FFBB28" />,
+                        <Cell key="nurses" fill="#FF8042" />,
+                        <Cell key="ward" fill="#A4DE02" />,
+                        <Cell key="cancel" fill="#8884D8" />
+                      ]}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    </>
+  );
+
+  const renderOccupancyCharts = () => (
+    <div className="grid grid-cols-1 gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>PACU Phase 1 käyttöaste (24h)</CardTitle>
         </CardHeader>
         <CardContent className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={timeSeriesData.slice(0, 24 * 4)} // Show first 24 hours
-              margin={{ top: 5, right: 30, left: 5, bottom: 5 }}
-            >
+            <LineChart data={pacu1Data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis 
-                dataKey="time" 
-                tick={{ fontSize: 12 }} 
-                interval={4}
-                label={{ value: 'Aika (tunnit)', position: 'insideBottom', offset: -5 }}
-              />
-              <YAxis 
-                domain={[0, 100]} 
-                label={{ 
-                  value: 'Käyttöaste (%)', 
-                  angle: -90, 
-                  position: 'insideLeft'
-                }}
-              />
-              <Tooltip 
-                formatter={(value) => [`${value}%`]} 
-                labelFormatter={(label) => `Aika: ${label}`}
-              />
-              <Legend />
-              <Line 
-                type="monotone" 
-                dataKey="bedOccupancy" 
-                name="Vuodekäyttö" 
-                stroke="#0ea5e9" 
-                strokeWidth={2}
-                activeDot={{ r: 6 }} 
-              />
-              <Line 
-                type="monotone" 
-                dataKey="nurseUtilization" 
-                name="Hoitajakäyttö" 
-                stroke="#22c55e" 
-                strokeWidth={2}
-                activeDot={{ r: 6 }} 
-              />
+              <XAxis dataKey="label" />
+              <YAxis label={{ value: 'Beds', angle: -90, position: 'insideLeft' }} />
+              <Tooltip labelFormatter={(label) => `Kellonaika: ${label}`} />
+              <Line type="monotone" dataKey="count" stroke="#0088FE" name="PACU P1" />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>
       </Card>
-
+      
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Potilasjakauma</CardTitle>
+        <CardHeader>
+          <CardTitle>PACU Phase 2 käyttöaste (24h)</CardTitle>
         </CardHeader>
         <CardContent className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={patientDistributionData}
-              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-            >
+            <LineChart data={pacu2Data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis label={{ value: 'Potilaiden määrä', angle: -90, position: 'insideLeft' }} />
-              <Tooltip />
-              <Bar dataKey="count" name="Potilaiden määrä">
-                {patientDistributionData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.fill} />
-                ))}
-              </Bar>
-            </BarChart>
+              <XAxis dataKey="label" />
+              <YAxis label={{ value: 'Beds', angle: -90, position: 'insideLeft' }} />
+              <Tooltip labelFormatter={(label) => `Kellonaika: ${label}`} />
+              <Line type="monotone" dataKey="count" stroke="#00C49F" name="PACU P2" />
+            </LineChart>
           </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Odotusaikajakauma</CardTitle>
-        </CardHeader>
-        <CardContent className="h-[300px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={waitTimeData}
-              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="range" />
-              <YAxis 
-                yAxisId="left" 
-                orientation="left" 
-                label={{ value: 'Potilaiden määrä', angle: -90, position: 'insideLeft' }} 
-              />
-              <YAxis 
-                yAxisId="right" 
-                orientation="right" 
-                domain={[0, 100]} 
-                label={{ value: '%', angle: 90, position: 'insideRight' }} 
-              />
-              <Tooltip formatter={(value, name) => {
-                return name === 'percentage' ? `${value}%` : value;
-              }} />
-              <Legend />
-              <Bar yAxisId="left" dataKey="count" name="Potilaat" fill="#0ea5e9" />
-              <Bar yAxisId="right" dataKey="percentage" name="%" fill="#22c55e" />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg">Yhteenveto</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">Keskimääräinen odotusaika</p>
-                <p className="text-2xl font-semibold text-medical-blue">
-                  {Math.round(results.meanWaitTime || 0)} min
-                </p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">P95 odotusaika</p>
-                <p className="text-2xl font-semibold text-medical-blue">
-                  {Math.round(results.p95WaitTime || 0)} min
-                </p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">Keskimääräinen vuodekäyttö</p>
-                <p className="text-2xl font-semibold text-medical-teal">
-                  {Math.round((results.meanBedOccupancy || 0) * 100)}%
-                </p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">Maksimi vuodekäyttö</p>
-                <p className="text-2xl font-semibold text-medical-teal">
-                  {Math.round((results.maxBedOccupancy || 0) * 100)}%
-                </p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">Keskimääräinen hoitajakäyttö</p>
-                <p className="text-2xl font-semibold text-medical-green">
-                  {Math.round((results.meanNurseUtilization || 0) * 100)}%
-                </p>
-              </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">Maksimi hoitajakäyttö</p>
-                <p className="text-2xl font-semibold text-medical-green">
-                  {Math.round((results.maxNurseUtilization || 0) * 100)}%
-                </p>
-              </div>
-            </div>
-          </div>
         </CardContent>
       </Card>
       
-      {results.peakTimes && results.peakTimes.length > 0 && (
-        <Card className="md:col-span-2">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Ruuhkahuiput ({`>`}80% vuodekäyttö)</CardTitle>
-          </CardHeader>
-          <CardContent className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={peakOccupancyData}
-                margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="formattedTime" 
-                  label={{ value: 'Aika', position: 'insideBottom', offset: -5 }}
-                />
-                <YAxis 
-                  domain={[75, 100]}
-                  label={{ value: 'Vuodekäyttö (%)', angle: -90, position: 'insideLeft' }}
-                />
-                <Tooltip 
-                  formatter={(value) => [`${value}%`, 'Vuodekäyttö']}
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="occupancy" 
-                  stroke="#ef4444" 
-                  fill="#ef4444" 
-                  fillOpacity={0.3}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Osastojen käyttöaste (24h)</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[300px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={wardData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="label" />
+              <YAxis label={{ value: 'Beds', angle: -90, position: 'insideLeft' }} />
+              <Tooltip labelFormatter={(label) => `Kellonaika: ${label}`} />
+              <Line type="monotone" dataKey="count" stroke="#FFBB28" name="Ward" />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+      
+      <Card>
+        <CardHeader>
+          <CardTitle>Hoitajakäyttöaste (24h)</CardTitle>
+        </CardHeader>
+        <CardContent className="h-[300px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={nurseData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="label" />
+              <YAxis
+                label={{ value: 'Utilization %', angle: -90, position: 'insideLeft' }}
+                domain={[0, 1]}
+                tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
+              />
+              <Tooltip
+                formatter={(value) => [`${(value * 100).toFixed(1)}%`, 'Utilization']}
+                labelFormatter={(label) => `Kellonaika: ${label}`}
+              />
+              <Line type="monotone" dataKey="utilization" stroke="#FF8042" name="Nurses" />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {chartType === 'metrics' ? renderMetricsCharts() : renderOccupancyCharts()}
     </div>
   );
 };
