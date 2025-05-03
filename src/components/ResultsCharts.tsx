@@ -139,13 +139,15 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, params, chartTyp
                   outerRadius={80}
                   fill="#8884d8"
                   dataKey="value"
-                  label={({ name, value }) => `${name}: ${value.toFixed(1)}%`}
+                  label={({ name, value }) => `${name}: ${typeof value === 'number' ? value.toFixed(1) : value}%`}
                 >
                   {orUtilizationData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value) => [`${value.toFixed(1)}%`, 'Käyttöaste']} />
+                <Tooltip formatter={(value) => {
+                  return [`${typeof value === 'number' ? value.toFixed(1) : value}%`, 'Käyttöaste'];
+                }} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
@@ -173,7 +175,9 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, params, chartTyp
                   label={{ value: '%', angle: -90, position: 'insideLeft' }} 
                   domain={[0, 100]} 
                 />
-                <Tooltip formatter={(value) => [`${value.toFixed(1)}%`, 'Käyttöaste']} />
+                <Tooltip formatter={(value) => {
+                  return [`${typeof value === 'number' ? value.toFixed(1) : value}%`, 'Käyttöaste'];
+                }} />
                 <Bar dataKey="value" fill="#8884d8">
                   {[
                     <Cell key="pacu1" fill="#0088FE" />,
@@ -268,7 +272,9 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, params, chartTyp
                     <YAxis 
                       label={{ value: '€', angle: -90, position: 'insideLeft' }}
                     />
-                    <Tooltip formatter={(value) => [`€${value.toFixed(2)}`, 'Kustannus']} />
+                    <Tooltip formatter={(value) => {
+                      return [`€${typeof value === 'number' ? value.toFixed(2) : value}`, 'Kustannus'];
+                    }} />
                     <Bar dataKey="value" fill="#8884d8">
                       {[
                         <Cell key="or" fill="#0088FE" />,
@@ -354,10 +360,12 @@ const ResultsCharts: React.FC<ResultsChartsProps> = ({ results, params, chartTyp
               <YAxis
                 label={{ value: 'Utilization %', angle: -90, position: 'insideLeft' }}
                 domain={[0, 1]}
-                tickFormatter={(value) => `${(value * 100).toFixed(0)}%`}
+                tickFormatter={(value) => `${(Number(value) * 100).toFixed(0)}%`}
               />
               <Tooltip
-                formatter={(value) => [`${(value * 100).toFixed(1)}%`, 'Utilization']}
+                formatter={(value) => {
+                  return [`${typeof value === 'number' ? (value * 100).toFixed(1) : value}%`, 'Utilization'];
+                }}
                 labelFormatter={(label) => `Kellonaika: ${label}`}
               />
               <Line type="monotone" dataKey="utilization" stroke="#FF8042" name="Nurses" />

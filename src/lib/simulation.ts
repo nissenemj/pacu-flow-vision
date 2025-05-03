@@ -1,4 +1,3 @@
-
 import { v4 as uuidv4 } from 'uuid';
 
 // --- Utility Functions ---
@@ -419,26 +418,26 @@ export function runSimulation(params: SimulationParams): SimulationResults {
   };
 
   const updateStats = (time: number) => {
-      const duration = time - lastStatsUpdateTime;
-      if (duration <= 0) return;
+    const duration = time - lastStatsUpdateTime;
+    if (duration <= 0) return;
 
-      const p1Busy = Object.values(pacu1Beds).filter(b => b.isBusy).length;
-      const p2Busy = Object.values(pacu2Beds).filter(b => b.isBusy).length;
-      const wardBusy = Object.values(wardBeds).filter(b => b.isBusy).length;
-      const nurseBusy = Object.values(nurses).filter(n => n.isBusy).length;
-      const waitingWardCount = wardWaitingQueue.length;
+    const p1Busy = Object.values(pacu1Beds).filter(b => b.isBusy).length;
+    const p2Busy = Object.values(pacu2Beds).filter(b => b.isBusy).length;
+    const wardBusy = Object.values(wardBeds).filter(b => b.isBusy).length;
+    const nurseBusy = Object.values(nurses).filter(n => n.isBusy).length;
+    const waitingWardCount = wardWaitingQueue.length;
 
-      if (occupancyData.pacu1[occupancyData.pacu1.length - 1].count !== p1Busy) occupancyData.pacu1.push({ time, count: p1Busy });
-      if (occupancyData.pacu2[occupancyData.pacu2.length - 1].count !== p2Busy) occupancyData.pacu2.push({ time, count: p2Busy });
-      if (occupancyData.ward[occupancyData.ward.length - 1].count !== wardBusy) occupancyData.ward.push({ time, count: wardBusy });
-      if (occupancyData.nurse[occupancyData.nurse.length - 1].busyCount !== nurseBusy) occupancyData.nurse.push({ time, count: nurseBusy, busyCount: nurseBusy });
+    if (occupancyData.pacu1[occupancyData.pacu1.length - 1].count !== p1Busy) occupancyData.pacu1.push({ time, count: p1Busy });
+    if (occupancyData.pacu2[occupancyData.pacu2.length - 1].count !== p2Busy) occupancyData.pacu2.push({ time, count: p2Busy });
+    if (occupancyData.ward[occupancyData.ward.length - 1].count !== wardBusy) occupancyData.ward.push({ time, count: wardBusy });
+    if (occupancyData.nurse[occupancyData.nurse.length - 1].busyCount !== nurseBusy) occupancyData.nurse.push({ time, busyCount: nurseBusy });
 
-      const totalPacuBeds = (params.pacuParams?.phase1Beds || 0) + (params.pacuParams?.phase2Beds || 0);
-      if (totalPacuBeds > 0) {
-          totalPacuBlockedTime += (waitingWardCount / totalPacuBeds) * duration;
-      }
+    const totalPacuBeds = params.pacuParams.phase1Beds + params.pacuParams.phase2Beds;
+    if (totalPacuBeds > 0) {
+        totalPacuBlockedTime += (waitingWardCount / totalPacuBeds) * duration;
+    }
 
-      lastStatsUpdateTime = time;
+    lastStatsUpdateTime = time;
   };
 
   const tryAssignNurse = (patientId: string, phase: 'pacu1' | 'pacu2'): boolean => {

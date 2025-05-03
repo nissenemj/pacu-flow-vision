@@ -1,403 +1,232 @@
 
-import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import React, { useState, useEffect } from 'react';
+import { SimulationParams, SimulationResults } from '@/lib/simulation';
+import { OptimizationParams } from '@/lib/optimizer';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { toast } from '@/components/ui/use-toast';
-import { SimulationResults, SimulationParams } from '@/lib/simulation';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-interface Scenario {
+export interface ScenarioManagerProps {
+  currentParams: SimulationParams;
+  currentResults: SimulationResults | null;
+  currentOptParams?: OptimizationParams; // Add this prop
+  currentBlocks?: any[]; // Add this prop
+  currentSurgeryList?: any[]; // Add this prop
+  currentScheduleType?: 'template' | 'custom'; // Add this prop
+  onLoadScenario: (scenario: {
+    params: SimulationParams;
+    results: SimulationResults | null;
+    optParams?: OptimizationParams; // Add to return type
+    blocks?: any[]; // Add to return type
+    surgeryList?: any[]; // Add to return type
+    scheduleType?: 'template' | 'custom'; // Add to return type
+  }) => void;
+}
+
+// Local storage key for scenarios
+const SCENARIOS_STORAGE_KEY = 'pacu-simulator-scenarios';
+
+// Interface for a saved scenario
+interface SavedScenario {
   id: string;
   name: string;
   description: string;
-  createdAt: Date;
+  date: string;
   params: SimulationParams;
   results: SimulationResults | null;
-  tags: string[];
-}
-
-interface ScenarioManagerProps {
-  currentParams: SimulationParams;
-  currentResults: SimulationResults | null;
-  onLoadScenario: (scenario: Scenario) => void;
+  optParams?: OptimizationParams; // Add this field
+  blocks?: any[]; // Add this field
+  surgeryList?: any[]; // Add this field
+  scheduleType?: 'template' | 'custom'; // Add this field
+  tags?: string[];
 }
 
 const ScenarioManager: React.FC<ScenarioManagerProps> = ({
   currentParams,
   currentResults,
-  onLoadScenario
+  currentOptParams, // Add this prop
+  currentBlocks, // Add this prop
+  currentSurgeryList, // Add this prop
+  currentScheduleType, // Add this prop
+  onLoadScenario,
 }) => {
-  const [scenarios, setScenarios] = useState<Scenario[]>(() => {
-    // Try to load scenarios from localStorage
-    const savedScenarios = localStorage.getItem('simulation_scenarios');
+  const [scenarios, setScenarios] = useState<SavedScenario[]>([]);
+  const [newScenarioName, setNewScenarioName] = useState('');
+  const [newScenarioDescription, setNewScenarioDescription] = useState('');
+  const [newScenarioTags, setNewScenarioTags] = useState('');
+  const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null);
+
+  // Load scenarios from local storage on component mount
+  useEffect(() => {
+    const savedScenarios = localStorage.getItem(SCENARIOS_STORAGE_KEY);
     if (savedScenarios) {
       try {
-        // Convert dates from strings back to Date objects
-        const parsed = JSON.parse(savedScenarios);
-        return parsed.map((scenario: any) => ({
-          ...scenario,
-          createdAt: new Date(scenario.createdAt)
-        }));
-      } catch (e) {
-        console.error("Error parsing saved scenarios:", e);
-        return [];
+        setScenarios(JSON.parse(savedScenarios));
+      } catch (error) {
+        console.error("Error loading scenarios from local storage:", error);
       }
     }
-    return [];
-  });
-  
-  const [selectedScenarios, setSelectedScenarios] = useState<string[]>([]);
-  const [isComparing, setIsComparing] = useState(false);
-  const [newScenarioName, setNewScenarioName] = useState('');
-  const [newScenarioDesc, setNewScenarioDesc] = useState('');
-  const [newScenarioTags, setNewScenarioTags] = useState('');
-  const [saveDialogOpen, setSaveDialogOpen] = useState(false);
-  
-  // Save scenarios to localStorage whenever they change
-  React.useEffect(() => {
-    localStorage.setItem('simulation_scenarios', JSON.stringify(scenarios));
-  }, [scenarios]);
-  
-  const saveCurrentScenario = () => {
-    if (!currentResults) {
-      toast({
-        title: "Ei tuloksia tallennettavaksi",
-        description: "Aja simulaatio ensin nähdäksesi tulokset.",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    if (!newScenarioName.trim()) {
-      toast({
-        title: "Nimi vaaditaan",
-        description: "Anna skenaariolle nimi.",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    const tags = newScenarioTags.split(',')
-      .map(tag => tag.trim())
-      .filter(tag => tag.length > 0);
-    
-    const newScenario: Scenario = {
-      id: `scenario_${Date.now()}`,
-      name: newScenarioName,
-      description: newScenarioDesc,
-      createdAt: new Date(),
-      params: { ...currentParams },
-      results: { ...currentResults },
-      tags
-    };
-    
-    setScenarios(prev => [...prev, newScenario]);
-    setNewScenarioName('');
-    setNewScenarioDesc('');
-    setNewScenarioTags('');
-    setSaveDialogOpen(false);
-    
-    toast({
-      title: "Skenaario tallennettu",
-      description: `Skenaario "${newScenarioName}" on tallennettu.`
-    });
-  };
-  
-  const deleteScenario = (id: string) => {
-    setScenarios(prev => prev.filter(s => s.id !== id));
-    setSelectedScenarios(prev => prev.filter(sId => sId !== id));
-    toast({
-      title: "Skenaario poistettu",
-      description: "Skenaario on poistettu onnistuneesti."
-    });
-  };
-  
-  const toggleScenarioSelection = (id: string) => {
-    setSelectedScenarios(prev => {
-      if (prev.includes(id)) {
-        return prev.filter(sId => sId !== id);
-      } else {
-        // Limit to 3 selections
-        if (prev.length >= 3) {
-          toast({
-            title: "Maksimi vertailu",
-            description: "Voit vertailla enintään kolmea skenaariota kerrallaan.",
-            variant: "destructive"
-          });
-          return prev;
-        }
-        return [...prev, id];
-      }
-    });
-  };
-  
-  const startComparison = () => {
-    if (selectedScenarios.length < 2) {
-      toast({
-        title: "Valitse vähintään kaksi",
-        description: "Vertailuun tarvitaan vähintään kaksi skenaariota.",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    setIsComparing(true);
-  };
-  
-  const cancelComparison = () => {
-    setIsComparing(false);
-    setSelectedScenarios([]);
-  };
-  
-  // Format comparison data for charts
-  const prepareComparisonData = () => {
-    const selectedScenarioObjects = scenarios.filter(s => 
-      selectedScenarios.includes(s.id)
-    );
-    
-    // Bed occupancy comparison
-    const bedOccupancyData = selectedScenarioObjects.map(s => ({
-      name: s.name,
-      "Keskimääräinen käyttöaste": Math.round(s.results?.meanBedOccupancy * 100) || 0,
-      "Maksimi käyttöaste": Math.round(s.results?.maxBedOccupancy * 100) || 0
-    }));
-    
-    // Wait time comparison
-    const waitTimeData = selectedScenarioObjects.map(s => ({
-      name: s.name,
-      "Keskimääräinen odotus": Math.round(s.results?.meanWaitTime) || 0,
-      "95. persentiili odotus": Math.round(s.results?.p95WaitTime) || 0
-    }));
-    
-    // Resource comparison
-    const resourceData = selectedScenarioObjects.map(s => ({
-      name: s.name,
-      "Vuodepaikat": s.params.beds,
-      "Hoitajat": s.params.nurses
-    }));
-    
-    return {
-      bedOccupancyData,
-      waitTimeData,
-      resourceData
-    };
-  };
-  
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Skenaarioiden hallinta</h2>
-        <div className="flex space-x-2">
-          <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>
-            <DialogTrigger asChild>
-              <Button>Tallenna nykyinen skenaario</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Tallenna skenaario</DialogTitle>
-                <DialogDescription>
-                  Anna skenaariolle nimi, kuvaus ja tagit helpottaaksesi sen löytämistä myöhemmin.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div>
-                  <Label htmlFor="name">Nimi</Label>
-                  <Input 
-                    id="name" 
-                    value={newScenarioName} 
-                    onChange={e => setNewScenarioName(e.target.value)}
-                    placeholder="Esim. Perusskenaario 3 hoitajalla"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="description">Kuvaus</Label>
-                  <Textarea 
-                    id="description" 
-                    value={newScenarioDesc} 
-                    onChange={e => setNewScenarioDesc(e.target.value)}
-                    placeholder="Kuvaile skenaarion tarkoitus ja parametrit"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="tags">Tagit (pilkulla erotettuna)</Label>
-                  <Input 
-                    id="tags" 
-                    value={newScenarioTags} 
-                    onChange={e => setNewScenarioTags(e.target.value)}
-                    placeholder="Esim. perus, 3 hoitajaa, korkea potilasvirta"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setSaveDialogOpen(false)}>Peruuta</Button>
-                <Button onClick={saveCurrentScenario}>Tallenna</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-          
-          {selectedScenarios.length > 0 && !isComparing && (
-            <Button variant="outline" onClick={startComparison}>
-              Vertaile valittuja ({selectedScenarios.length})
-            </Button>
-          )}
-          
-          {isComparing && (
-            <Button variant="outline" onClick={cancelComparison}>
-              Peruuta vertailu
-            </Button>
-          )}
-        </div>
-      </div>
+  }, []);
 
-      {isComparing ? (
-        <div className="space-y-6">
-          <h3 className="text-xl font-semibold">Skenaarioiden vertailu</h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Bed Occupancy Comparison */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Vuodekäyttöaste</CardTitle>
-              </CardHeader>
-              <CardContent className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={prepareComparisonData().bedOccupancyData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis unit="%" />
-                    <Tooltip formatter={(value) => [`${value}%`, ""]} />
-                    <Legend />
-                    <Bar dataKey="Keskimääräinen käyttöaste" fill="#0ea5e9" />
-                    <Bar dataKey="Maksimi käyttöaste" fill="#f43f5e" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-            
-            {/* Wait Time Comparison */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Odotusajat</CardTitle>
-              </CardHeader>
-              <CardContent className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={prepareComparisonData().waitTimeData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis unit="min" />
-                    <Tooltip formatter={(value) => [`${value} min`, ""]} />
-                    <Legend />
-                    <Bar dataKey="Keskimääräinen odotus" fill="#22c55e" />
-                    <Bar dataKey="95. persentiili odotus" fill="#f97316" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-            
-            {/* Resource Comparison */}
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-lg">Resurssit</CardTitle>
-              </CardHeader>
-              <CardContent className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={prepareComparisonData().resourceData}
-                    margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="Vuodepaikat" fill="#8884d8" />
-                    <Bar dataKey="Hoitajat" fill="#82ca9d" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+  // Save scenarios to local storage
+  const saveScenarios = (updatedScenarios: SavedScenario[]) => {
+    try {
+      localStorage.setItem(SCENARIOS_STORAGE_KEY, JSON.stringify(updatedScenarios));
+      setScenarios(updatedScenarios);
+    } catch (error) {
+      console.error("Error saving scenarios to local storage:", error);
+    }
+  };
+
+  // Handle saving a new scenario
+  const handleSaveScenario = () => {
+    if (!newScenarioName.trim()) {
+      return; // Don't save with empty name
+    }
+
+    const now = new Date();
+    const newScenario: SavedScenario = {
+      id: `scenario-${Date.now()}`,
+      name: newScenarioName.trim(),
+      description: newScenarioDescription.trim(),
+      date: now.toISOString(),
+      params: currentParams,
+      results: currentResults,
+      optParams: currentOptParams, // Save optParams
+      blocks: currentBlocks, // Save blocks
+      surgeryList: currentSurgeryList, // Save surgeryList
+      scheduleType: currentScheduleType, // Save scheduleType
+      tags: newScenarioTags.trim().split(',').map(tag => tag.trim()).filter(Boolean),
+    };
+
+    const updatedScenarios = [...scenarios, newScenario];
+    saveScenarios(updatedScenarios);
+    
+    // Clear the form
+    setNewScenarioName('');
+    setNewScenarioDescription('');
+    setNewScenarioTags('');
+  };
+
+  // Handle loading a scenario
+  const handleLoadScenario = () => {
+    if (!selectedScenarioId) return;
+    
+    const scenarioToLoad = scenarios.find(s => s.id === selectedScenarioId);
+    if (!scenarioToLoad) return;
+    
+    onLoadScenario({
+      params: scenarioToLoad.params,
+      results: scenarioToLoad.results,
+      optParams: scenarioToLoad.optParams, // Include optParams
+      blocks: scenarioToLoad.blocks, // Include blocks
+      surgeryList: scenarioToLoad.surgeryList, // Include surgeryList
+      scheduleType: scenarioToLoad.scheduleType, // Include scheduleType
+    });
+  };
+
+  // Handle deleting a scenario
+  const handleDeleteScenario = () => {
+    if (!selectedScenarioId) return;
+    
+    const updatedScenarios = scenarios.filter(s => s.id !== selectedScenarioId);
+    saveScenarios(updatedScenarios);
+    setSelectedScenarioId(null);
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Tallenna uusi skenaario</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="scenario-name" className="text-sm font-medium">Skenaarion nimi</label>
+              <Input
+                id="scenario-name"
+                value={newScenarioName}
+                onChange={(e) => setNewScenarioName(e.target.value)}
+                placeholder="Esim. Osastopohjaiset virtausmallit"
+              />
+            </div>
+            <div>
+              <label htmlFor="scenario-description" className="text-sm font-medium">Kuvaus</label>
+              <Input
+                id="scenario-description"
+                value={newScenarioDescription}
+                onChange={(e) => setNewScenarioDescription(e.target.value)}
+                placeholder="Skenaarion tarkempi kuvaus..."
+              />
+            </div>
+            <div>
+              <label htmlFor="scenario-tags" className="text-sm font-medium">Tagit (pilkulla erotettuna)</label>
+              <Input
+                id="scenario-tags"
+                value={newScenarioTags}
+                onChange={(e) => setNewScenarioTags(e.target.value)}
+                placeholder="Esim. osastot, pacu, optimointi"
+              />
+            </div>
+            <div className="pt-2">
+              <Button onClick={handleSaveScenario} className="w-full">Tallenna skenaario</Button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {scenarios.length === 0 ? (
-            <Card className="md:col-span-2 lg:col-span-3">
-              <CardContent className="flex items-center justify-center h-40">
-                <p className="text-muted-foreground">
-                  Ei tallennettuja skenaarioita. Aja simulaatio ja tallenna skenaario nähdäksesi sen täällä.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            scenarios.map((scenario) => (
-              <Card key={scenario.id} className="hover:shadow-md transition-shadow">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle>{scenario.name}</CardTitle>
-                    <Checkbox 
-                      checked={selectedScenarios.includes(scenario.id)}
-                      onCheckedChange={() => toggleScenarioSelection(scenario.id)}
-                      className="ml-2"
-                    />
-                  </div>
-                  <CardDescription className="flex items-center gap-2">
-                    {new Date(scenario.createdAt).toLocaleDateString('fi-FI')}
-                    <span className="text-xs text-muted-foreground">
-                      ({scenario.params.beds} vuodetta, {scenario.params.nurses} hoitajaa)
-                    </span>
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {scenario.description && (
-                    <p className="text-sm mb-3">{scenario.description}</p>
-                  )}
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Vuodekäyttö:</span>
-                      <span className="font-medium">
-                        {Math.round(scenario.results?.meanBedOccupancy * 100)}%
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Tallennetut skenaariot</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {scenarios.length > 0 ? (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {scenarios.map((scenario) => (
+                  <div 
+                    key={scenario.id} 
+                    className={`p-3 border rounded-md cursor-pointer ${selectedScenarioId === scenario.id ? 'border-primary bg-primary/10' : 'border-border'}`}
+                    onClick={() => setSelectedScenarioId(scenario.id)}
+                  >
+                    <div className="flex justify-between items-start">
+                      <h3 className="font-medium">{scenario.name}</h3>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(scenario.date).toLocaleDateString()}
                       </span>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span>Odotusaika:</span>
-                      <span className="font-medium">
-                        {Math.round(scenario.results?.meanWaitTime)} min
-                      </span>
-                    </div>
+                    {scenario.description && (
+                      <p className="text-sm text-muted-foreground mt-1">{scenario.description}</p>
+                    )}
+                    {scenario.tags && scenario.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {scenario.tags.map((tag, i) => (
+                          <Badge key={i} variant="outline" className="text-xs">{tag}</Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {scenario.tags?.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-3">
-                      {scenario.tags.map((tag, i) => (
-                        <Badge key={i} variant="outline" className="text-xs">{tag}</Badge>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-                <CardFooter className="flex justify-between">
-                  <Button variant="outline" size="sm" onClick={() => onLoadScenario(scenario)}>
-                    Lataa
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => deleteScenario(scenario.id)}>
-                    Poista
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))
-          )}
-        </div>
-      )}
+                ))}
+              </div>
+            ) : (
+              <p className="text-center text-muted-foreground">Ei tallennettuja skenaarioita.</p>
+            )}
+
+            {scenarios.length > 0 && (
+              <div className="flex space-x-2 pt-2">
+                <Button onClick={handleLoadScenario} disabled={!selectedScenarioId} className="flex-1">
+                  Lataa valittu
+                </Button>
+                <Button onClick={handleDeleteScenario} disabled={!selectedScenarioId} variant="destructive" className="flex-1">
+                  Poista valittu
+                </Button>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 };
