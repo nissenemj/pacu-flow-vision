@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from '@/components/ui/label';
@@ -9,6 +10,8 @@ import { PlayCircle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import SurgeryScheduler from './SurgeryScheduler';
 import BlockScheduler from './BlockScheduler';
+import CostParameters from './CostParameters';
+import DataCalibration from './DataCalibration';
 
 interface SimulationParametersProps {
   params: SimulationParams;
@@ -16,6 +19,8 @@ interface SimulationParametersProps {
   onPatientDistributionChange: (classId: string, value: number) => void;
   onRunSimulation: () => void;
   isRunning: boolean;
+  surgeryList?: any[];
+  onSurgeryListImport?: (surgeryList: any[]) => void;
 }
 
 const SimulationParameters: React.FC<SimulationParametersProps> = ({
@@ -23,7 +28,9 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
   onParamChange,
   onPatientDistributionChange,
   onRunSimulation,
-  isRunning
+  isRunning,
+  surgeryList,
+  onSurgeryListImport
 }) => {
   // Calculate total percentage for patient distribution
   const totalPercentage = Object.values(params.patientClassDistribution).reduce((sum, val) => sum + val, 0);
@@ -44,6 +51,18 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
     onParamChange('orBlocks', blocks);
   };
 
+  // Handle cost parameters change
+  const handleCostParamChange = (updatedCostParams: Partial<SimulationParams['costParams']>) => {
+    onParamChange('costParams', { ...params.costParams, ...updatedCostParams });
+  };
+
+  // Handle multiple parameter updates (e.g., from data calibration)
+  const handleParamsUpdate = (updatedParams: Partial<SimulationParams>) => {
+    Object.entries(updatedParams).forEach(([key, value]) => {
+      onParamChange(key, value);
+    });
+  };
+
   const [activeTab, setActiveTab] = useState("resources");
   
   return (
@@ -57,8 +76,8 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
         <TabsList>
           <TabsTrigger value="resources">Resurssit</TabsTrigger>
           <TabsTrigger value="patients">Potilasjakauma</TabsTrigger>
-          <TabsTrigger value="schedule">Leikkauslista</TabsTrigger>
-          <TabsTrigger value="blocks">Salisuunnittelu</TabsTrigger>
+          <TabsTrigger value="costs">Kustannukset</TabsTrigger>
+          <TabsTrigger value="calibration">Kalibrointi</TabsTrigger>
         </TabsList>
         
         <TabsContent value="resources">
@@ -216,22 +235,19 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
           </Card>
         </TabsContent>
         
-        <TabsContent value="schedule">
-          <SurgeryScheduler
-            patientClasses={params.patientClasses}
-            patientDistribution={params.patientClassDistribution}
-            simulationDays={params.simulationDays}
-            onScheduleGenerated={handleSurgeryListGenerated}
-            onScheduleTypeChange={handleScheduleTypeChange}
-            blocks={[]} // Pass empty blocks for now
-            blockScheduleEnabled={false} // Disable block scheduling by default
+        <TabsContent value="costs">
+          <CostParameters 
+            costParams={params.costParams} 
+            onCostParamsChange={handleCostParamChange} 
           />
         </TabsContent>
         
-        <TabsContent value="blocks">
-          <BlockScheduler 
-            patientClasses={params.patientClasses}
-            onScheduleChange={handleBlockScheduleChange}
+        <TabsContent value="calibration">
+          <DataCalibration 
+            currentParams={params}
+            onParamsUpdate={handleParamsUpdate}
+            surgeryList={surgeryList}
+            onSurgeryListImport={onSurgeryListImport}
           />
         </TabsContent>
         

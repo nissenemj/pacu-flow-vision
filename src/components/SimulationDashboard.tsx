@@ -274,6 +274,19 @@ const SimulationDashboard: React.FC = () => {
     }
   }, [blockScheduleEnabled, blocks, generateSurgeryListFromBlocks]);
 
+  // Handle surgery list import from DataCalibration
+  const handleSurgeryListImport = useCallback((importedSurgeryList: SurgeryCaseInput[]) => {
+    setSurgeryList(importedSurgeryList);
+    setScheduleType('custom');
+    
+    setParams(prev => ({
+      ...prev,
+      surgeryScheduleType: 'custom',
+      customSurgeryList: importedSurgeryList,
+    }));
+  }, []);
+
+  // Run simulation
   const runSimulationHandler = useCallback(() => {
     setIsRunning(true);
     // Use setTimeout to allow UI to update before running simulation
@@ -451,6 +464,8 @@ const SimulationDashboard: React.FC = () => {
                 onPatientDistributionChange={handlePatientDistributionChange}
                 onRunSimulation={runSimulationHandler}
                 isRunning={isRunning}
+                surgeryList={surgeryList}
+                onSurgeryListImport={handleSurgeryListImport}
               />
             </TabsContent>
             
