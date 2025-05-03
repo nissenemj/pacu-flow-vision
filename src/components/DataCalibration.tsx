@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -167,11 +166,11 @@ const DataCalibration: React.FC<DataCalibrationProps> = ({
           updatedPatientClasses[classIndex] = {
             ...updatedPatientClasses[classIndex],
             surgeryDurationMean: Math.round(surgeryStats.mean),
-            surgeryDurationStdDev: Math.round(surgeryStats.stdDev),
+            surgeryDurationStd: Math.round(surgeryStats.stdDev),
             pacuPhase1DurationMean: Math.round(pacu1Stats.mean),
-            pacuPhase1DurationStdDev: Math.round(pacu1Stats.stdDev),
+            pacuPhase1DurationStd: Math.round(pacu1Stats.stdDev),
             pacuPhase2DurationMean: Math.round(pacu2Stats.mean),
-            pacuPhase2DurationStdDev: Math.round(pacu2Stats.stdDev)
+            pacuPhase2DurationStd: Math.round(pacu2Stats.stdDev)
           };
           updatedCount++;
         }

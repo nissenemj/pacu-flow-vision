@@ -29,86 +29,86 @@ const CostParameters: React.FC<CostParametersProps> = ({ costParams, onCostParam
       <CardContent>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="orCostPerMinute">OR-kustannus (€/min)</Label>
+            <Label htmlFor="costPerORMinute">OR-kustannus (€/min)</Label>
             <Input
-              id="orCostPerMinute"
+              id="costPerORMinute"
               type="number"
               step="0.01"
-              value={costParams.orCostPerMinute}
-              onChange={(e) => handleCostChange('orCostPerMinute', e.target.value)}
+              value={costParams.costPerORMinute}
+              onChange={(e) => handleCostChange('costPerORMinute', e.target.value)}
             />
             <p className="text-xs text-muted-foreground">Leikkaussalin käyttökustannus per minuutti</p>
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="pacuPhase1CostPerMinute">PACU Phase I -kustannus (€/min)</Label>
+            <Label htmlFor="costPerPacuPhase1Minute">PACU Phase I -kustannus (€/min)</Label>
             <Input
-              id="pacuPhase1CostPerMinute"
+              id="costPerPacuPhase1Minute"
               type="number"
               step="0.01"
-              value={costParams.pacuPhase1CostPerMinute}
-              onChange={(e) => handleCostChange('pacuPhase1CostPerMinute', e.target.value)}
+              value={costParams.costPerPacuPhase1Minute}
+              onChange={(e) => handleCostChange('costPerPacuPhase1Minute', e.target.value)}
             />
             <p className="text-xs text-muted-foreground">Heräämön Phase I -vuodepaikan kustannus per minuutti</p>
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="pacuPhase2CostPerMinute">PACU Phase II -kustannus (€/min)</Label>
+            <Label htmlFor="costPerPacuPhase2Minute">PACU Phase II -kustannus (€/min)</Label>
             <Input
-              id="pacuPhase2CostPerMinute"
+              id="costPerPacuPhase2Minute"
               type="number"
               step="0.01"
-              value={costParams.pacuPhase2CostPerMinute}
-              onChange={(e) => handleCostChange('pacuPhase2CostPerMinute', e.target.value)}
+              value={costParams.costPerPacuPhase2Minute}
+              onChange={(e) => handleCostChange('costPerPacuPhase2Minute', e.target.value)}
             />
             <p className="text-xs text-muted-foreground">Heräämön Phase II -vuodepaikan kustannus per minuutti</p>
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="nurseCostPerMinute">Hoitajakustannus (€/min)</Label>
+            <Label htmlFor="costPerNurseMinute">Hoitajakustannus (€/min)</Label>
             <Input
-              id="nurseCostPerMinute"
+              id="costPerNurseMinute"
               type="number"
               step="0.01"
-              value={costParams.nurseCostPerMinute}
-              onChange={(e) => handleCostChange('nurseCostPerMinute', e.target.value)}
+              value={costParams.costPerNurseMinute}
+              onChange={(e) => handleCostChange('costPerNurseMinute', e.target.value)}
             />
             <p className="text-xs text-muted-foreground">Hoitajan työajan kustannus per minuutti</p>
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="wardBedCostPerMinute">Vuodeosasto (€/min)</Label>
+            <Label htmlFor="costPerWardBedMinute">Vuodeosasto (€/min)</Label>
             <Input
-              id="wardBedCostPerMinute"
+              id="costPerWardBedMinute"
               type="number"
               step="0.01"
-              value={costParams.wardBedCostPerMinute}
-              onChange={(e) => handleCostChange('wardBedCostPerMinute', e.target.value)}
+              value={costParams.costPerWardBedMinute}
+              onChange={(e) => handleCostChange('costPerWardBedMinute', e.target.value)}
             />
             <p className="text-xs text-muted-foreground">Vuodeosaston vuodepaikan kustannus per minuutti</p>
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="cancellationCost">Peruutuksen kustannus (€)</Label>
+            <Label htmlFor="costPerCancellation">Peruutuksen kustannus (€)</Label>
             <Input
-              id="cancellationCost"
+              id="costPerCancellation"
               type="number"
               step="1"
-              value={costParams.cancellationCost}
-              onChange={(e) => handleCostChange('cancellationCost', e.target.value)}
+              value={costParams.costPerCancellation}
+              onChange={(e) => handleCostChange('costPerCancellation', e.target.value)}
             />
             <p className="text-xs text-muted-foreground">Kustannus leikkauksen peruutuksesta</p>
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="overtimeMultiplier">Ylityökerroin</Label>
+            <Label htmlFor="overtimeCostMultiplier">Ylityökerroin</Label>
             <Input
-              id="overtimeMultiplier"
+              id="overtimeCostMultiplier"
               type="number"
               step="0.1"
               min="1"
-              value={costParams.overtimeMultiplier || 1.5}
-              onChange={(e) => handleCostChange('overtimeMultiplier', e.target.value)}
+              value={costParams.overtimeCostMultiplier || 1.5}
+              onChange={(e) => handleCostChange('overtimeCostMultiplier', e.target.value)}
             />
             <p className="text-xs text-muted-foreground">Ylityötuntien kustannuskerroin (esim. 1.5 = 50% lisää)</p>
           </div>
