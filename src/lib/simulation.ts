@@ -1,22 +1,107 @@
+
 import { v4 as uuidv4 } from 'uuid';
+
+// --- Utility Functions ---
+
+class PriorityQueue<T> {
+  private items: { element: T; priority: number }[] = [];
+  enqueue(element: T, priority: number): void {
+    const queueElement = { element, priority };
+    let added = false;
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.items[i].priority > queueElement.priority) {
+        this.items.splice(i, 0, queueElement);
+        added = true;
+        break;
+      }
+    }
+    if (!added) this.items.push(queueElement);
+  }
+  dequeue(): T | undefined { return this.items.shift()?.element; }
+  isEmpty(): boolean { return this.items.length === 0; }
+  peek(): T | undefined { return this.items[0]?.element; }
+  get length(): number { return this.items.length; }
+}
+
+function normalRandom(mean: number, stdDev: number): number {
+  if (stdDev <= 0) return mean;
+  let u = 0, v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  return Math.max(0, mean + stdDev * z);
+}
+
+function weightedRandomSelection(distribution: Record<string, number>): string | null {
+  const totalWeight = Object.values(distribution).reduce((sum, weight) => sum + weight, 0);
+  if (totalWeight <= 0) return null;
+  let random = Math.random() * totalWeight;
+  for (const id in distribution) {
+    if (random < distribution[id]) return id;
+    random -= distribution[id];
+  }
+  return Object.keys(distribution).pop() || null;
+}
+
+function exponentialRandom(rate: number): number {
+    if (rate <= 0) return Infinity;
+    return -Math.log(1.0 - Math.random()) / rate;
+}
+
+// --- Interfaces ---
+
+export interface WardParams {
+  totalBeds: number;
+}
+
+export interface StaffParams {
+  totalNurses: number;
+  phase1NurseRatio: number;
+  phase2NurseRatio: number;
+}
+
+export interface PacuParams {
+  phase1Beds: number;
+  phase2Beds: number;
+}
+
+export interface EmergencyParams {
+  enabled: boolean;
+  arrivalRateMeanPerDay?: number;
+  patientClassDistribution?: Record<string, number>;
+}
+
+// Add Cost Parameters Interface
+export interface CostParams {
+    costPerORMinute: number;
+    costPerPACU1BedMinute: number;
+    costPerPACU2BedMinute: number;
+    costPerNurseMinute: number;
+    costPerWardBedMinute: number; // Optional, if ward costs are tracked
+    costPerCancellation?: number; // Optional
+    // Add other relevant costs (e.g., overtime multiplier)
+}
 
 export interface SimulationParams {
   simulationDays: number;
   numberOfORs: number;
-  averageDailySurgeries: number;
   patientClasses: PatientClass[];
   patientClassDistribution: Record<string, number>;
   surgeryScheduleType: 'template' | 'custom';
-  customSurgeryList?: SurgeryCase[];
-  surgeryScheduleTemplate: {
-    averageDailySurgeries: number;
-  };
+  customSurgeryList?: SurgeryCaseInput[];
+  surgeryScheduleTemplate: { averageDailySurgeries: number };
   blockScheduleEnabled: boolean;
   orBlocks?: ORBlock[];
-  // Add missing properties used in components
+  pacuParams: PacuParams;
+  wardParams: WardParams;
+  staffParams: StaffParams;
+  emergencyParams: EmergencyParams;
+  costParams: CostParams; // Added cost parameters
+  // Legacy properties for backward compatibility
   beds?: number;
   nurses?: number;
   nursePatientRatio?: number;
+  averageDailySurgeries?: number;
 }
 
 export interface PatientClass {
@@ -25,54 +110,135 @@ export interface PatientClass {
   color: string;
   priority: number;
   surgeryDurationMean: number;
-  surgeryDurationStd?: number;
-  // Add missing properties used in components
-  processType?: 'standard' | 'outpatient' | 'directTransfer';
+  surgeryDurationStd: number;
+  processType: 'standard' | 'outpatient' | 'directTransfer';
+  pacuPhase1DurationMean: number;
+  pacuPhase1DurationStd: number;
+  pacuPhase2DurationMean: number;
+  pacuPhase2DurationStd: number;
+  // Legacy property for backward compatibility
   averagePacuTime?: number;
 }
 
 export interface ORBlock {
   id: string;
   orId: string;
-  start: number; // minutes from day start
-  end: number;   // minutes from day start
-  allowedClasses: string[]; // patient class IDs
-  day: number; // Day of the week (0 = Sunday, 6 = Saturday)
+  start: number;
+  end: number;
+  allowedClasses: string[];
+  day: number;
   label?: string;
-  allowedProcedures: string[];
+  allowedProcedures?: string[];
 }
 
-export interface SurgeryCase {
-  id: string;
+export interface SurgeryCaseInput {
+  id?: string;
   classId: string;
-  scheduledStartTime: number; // minutes from simulation start
-  duration: number; // minutes
+  scheduledStartTime: number;
+  duration?: number;
   orRoom: string;
+  priority?: number;
+  actualArrivalTime?: number;
+}
+
+// For backward compatibility with existing code
+export type SurgeryCase = SurgeryCaseInput & {
+  id: string;
+  caseType?: 'elective' | 'emergency';
+  actualArrivalTime: number;
+  duration: number;
   priority: number;
-  arrivalTime: number;
+  orStartTime?: number;
+  orEndTime?: number;
+  pacuPhase1StartTime?: number;
+  pacuPhase1EndTime?: number;
+  pacuPhase2StartTime?: number;
+  pacuPhase2EndTime?: number;
+  readyForWardTime?: number;
+  wardArrivalTime?: number;
+  dischargeTime?: number;
+  pacuPhase1BedId?: string;
+  pacuPhase2BedId?: string;
+  wardBedId?: string;
+  assignedNurseId?: string;
+  currentState?: 'scheduled' | 'arrived' | 'waiting_or' | 'in_or' | 'waiting_pacu1' | 'in_pacu1' | 'waiting_pacu2' | 'in_pacu2' | 'waiting_ward' | 'in_ward' | 'discharged' | 'cancelled';
+  wardTransferDelay?: number;
+  orWaitingTime?: number;
+  arrivalTime?: number; // For backwards compatibility
+}
+
+export interface SimulationEvent {
+  time: number;
+  type: 'PATIENT_ARRIVAL' | 'OR_AVAILABLE' | 'SURGERY_END' | 'PACU1_END' | 'PACU2_END' | 'WARD_BED_AVAILABLE' | 'DISCHARGE_CRITERIA_MET' | 'NURSE_AVAILABLE' | 'EMERGENCY_ARRIVAL' | 'SIMULATION_END_CHECK';
+  patientId?: string;
+  resourceId?: string;
+}
+
+export interface ResourceState {
+    id: string;
+    isBusy: boolean;
+    busyUntil: number;
+    assignedPatientId?: string;
+    // Cost tracking per resource
+    totalBusyTime: number;
+    lastBusyStartTime: number;
 }
 
 export interface SimulationResults {
-  surgeryList: SurgeryCase[];
-  waitingTimes: number[];
-  orUtilizations: Record<string, number>;
-  patientClassCounts: Record<string, number>;
-  averageWaitingTime: number;
-  maxWaitingTime: number;
-  totalSurgeries: number;
-  // Add missing properties used in components
+  completedSurgeries: SurgeryCase[];
+  cancelledSurgeries: SurgeryCase[];
+  meanORWaitingTime: number;
+  p95ORWaitingTime: number;
+  meanPacuTime: number;
+  meanWardTransferDelay: number;
+  p95WardTransferDelay: number;
+  pacuBlockedTimeRatio: number;
+  orUtilization: Record<string, number>;
+  meanPacuPhase1BedOccupancy: number;
+  meanPacuPhase2BedOccupancy: number;
+  meanWardBedOccupancy: number;
+  peakPacuPhase1BedOccupancy: number;
+  peakPacuPhase2BedOccupancy: number;
+  peakWardBedOccupancy: number;
+  meanNurseUtilization: number;
+  peakNurseUtilization: number;
+  overtimeHours: number;
+  pacuPhase1OccupancyData: Array<{ time: number; count: number }>;
+  pacuPhase2OccupancyData: Array<{ time: number; count: number }>;
+  wardOccupancyData: Array<{ time: number; count: number }>;
+  nurseUtilizationData: Array<{ time: number; busyCount: number }>;
+  wardTransferDelayDistribution: number[];
+  orWaitingTimeDistribution: number[];
+  totalCost: number;
+  costBreakdown: {
+      orCost: number;
+      pacu1Cost: number;
+      pacu2Cost: number;
+      nurseCost: number;
+      wardCost: number;
+      cancellationCost: number;
+  };
+  
+  // Legacy properties for backward compatibility with existing components
+  surgeryList?: SurgeryCase[];
+  waitingTimes?: number[];
+  orUtilizations?: Record<string, number>;
+  patientClassCounts?: Record<string, number>;
+  averageWaitingTime?: number;
+  maxWaitingTime?: number;
+  totalSurgeries?: number;
   meanWaitTime?: number;
   p95WaitTime?: number;
   meanBedOccupancy?: number;
   maxBedOccupancy?: number;
-  meanNurseUtilization?: number;
   maxNurseUtilization?: number;
   patientTypeCount?: Record<string, number>;
   bedOccupancy?: number[];
   nurseUtilization?: number[];
-  orUtilization?: Record<string, number[]>;
   peakTimes?: Array<{time: number, occupancy: number}>;
 }
+
+// --- Default Values ---
 
 export const defaultPatientClasses: PatientClass[] = [
   { 
@@ -81,8 +247,12 @@ export const defaultPatientClasses: PatientClass[] = [
     color: '#1f77b4', 
     priority: 1, 
     surgeryDurationMean: 60, 
-    surgeryDurationStd: 15,
-    processType: 'standard',
+    surgeryDurationStd: 15, 
+    processType: 'standard', 
+    pacuPhase1DurationMean: 60, 
+    pacuPhase1DurationStd: 15, 
+    pacuPhase2DurationMean: 60, 
+    pacuPhase2DurationStd: 15,
     averagePacuTime: 120
   },
   { 
@@ -91,377 +261,801 @@ export const defaultPatientClasses: PatientClass[] = [
     color: '#ff7f0e', 
     priority: 2, 
     surgeryDurationMean: 90, 
-    surgeryDurationStd: 20,
-    processType: 'standard',
+    surgeryDurationStd: 20, 
+    processType: 'standard', 
+    pacuPhase1DurationMean: 75, 
+    pacuPhase1DurationStd: 20, 
+    pacuPhase2DurationMean: 75, 
+    pacuPhase2DurationStd: 20,
     averagePacuTime: 150
   },
   { 
     id: 'C', 
-    name: 'Luokka C', 
+    name: 'Luokka C (Päiki)', 
     color: '#2ca02c', 
     priority: 3, 
     surgeryDurationMean: 120, 
-    surgeryDurationStd: 30,
-    processType: 'outpatient',
+    surgeryDurationStd: 30, 
+    processType: 'outpatient', 
+    pacuPhase1DurationMean: 45, 
+    pacuPhase1DurationStd: 10, 
+    pacuPhase2DurationMean: 90, 
+    pacuPhase2DurationStd: 25,
     averagePacuTime: 30
   },
   { 
     id: 'D', 
-    name: 'Luokka D', 
+    name: 'Luokka D (Suora)', 
     color: '#d62728', 
     priority: 4, 
     surgeryDurationMean: 180, 
-    surgeryDurationStd: 45,
-    processType: 'directTransfer',
+    surgeryDurationStd: 45, 
+    processType: 'directTransfer', 
+    pacuPhase1DurationMean: 0, 
+    pacuPhase1DurationStd: 0, 
+    pacuPhase2DurationMean: 0, 
+    pacuPhase2DurationStd: 0,
     averagePacuTime: 0
   },
 ];
 
+export const defaultCostParams: CostParams = {
+    costPerORMinute: 10.0,
+    costPerPACU1BedMinute: 2.0,
+    costPerPACU2BedMinute: 1.5,
+    costPerNurseMinute: 1.0,
+    costPerWardBedMinute: 0.5,
+    costPerCancellation: 500.0,
+};
+
 export const defaultSimulationParams: SimulationParams = {
-  simulationDays: 30,
+  simulationDays: 5,
   numberOfORs: 3,
-  averageDailySurgeries: 6,
   patientClasses: defaultPatientClasses,
-  patientClassDistribution: {
-    'A': 0.25,
-    'B': 0.30,
-    'C': 0.30,
-    'D': 0.15,
-  },
+  patientClassDistribution: { 'A': 0.25, 'B': 0.30, 'C': 0.30, 'D': 0.15 },
   surgeryScheduleType: 'template',
-  surgeryScheduleTemplate: {
-    averageDailySurgeries: 6,
-  },
+  surgeryScheduleTemplate: { averageDailySurgeries: 6 },
   blockScheduleEnabled: false,
-  // Add default values for the new properties
+  pacuParams: { phase1Beds: 4, phase2Beds: 6 },
+  wardParams: { totalBeds: 20 },
+  staffParams: { totalNurses: 10, phase1NurseRatio: 1, phase2NurseRatio: 2 },
+  emergencyParams: { enabled: true, arrivalRateMeanPerDay: 1, patientClassDistribution: { 'A': 0.4, 'B': 0.6 } },
+  costParams: defaultCostParams,
+  // Legacy properties
   beds: 10,
   nurses: 5,
   nursePatientRatio: 2,
 };
 
-export function generateSurgeryList(
-  params: SimulationParams
-): SurgeryCase[] {
-  const { simulationDays, numberOfORs, averageDailySurgeries, patientClasses, patientClassDistribution } = params;
-  const surgeryList: SurgeryCase[] = [];
-  let surgeryIdCounter = 1;
-
-  for (let day = 0; day < simulationDays; day++) {
-    for (let i = 0; i < averageDailySurgeries; i++) {
-      const classId = weightedRandomSelection(patientClassDistribution);
-      if (!classId) continue;
-
-      const patientClass = patientClasses.find(pc => pc.id === classId);
-      if (!patientClass) continue;
-
-      const duration = Math.max(30, Math.round(normalRandom(patientClass.surgeryDurationMean, patientClass.surgeryDurationStd || 15)));
-      const orRoom = `OR-${(i % numberOfORs) + 1}`;
-      const scheduledStartTime = day * 1440 + (8 * 60) + (i % numberOfORs) * (8 * 60 / averageDailySurgeries); // Distribute surgeries throughout the day
-      const arrivalTime = scheduledStartTime - Math.random() * 60; // Arrive up to 60 minutes early
-
-      const surgery: SurgeryCase = {
-        id: `S-${day + 1}-${surgeryIdCounter++}`,
-        classId,
-        scheduledStartTime,
-        duration,
-        orRoom,
-        priority: patientClass.priority || 3,
-        arrivalTime,
-      };
-      surgeryList.push(surgery);
-    }
-  }
-  return surgeryList;
-}
+// --- Discrete Event Simulation Logic ---
 
 export function runSimulation(params: SimulationParams): SimulationResults {
-  let surgeryList: SurgeryCase[];
-  
+  // --- Initialization ---
+  let currentTime = 0;
+  const simulationEndTime = params.simulationDays * 24 * 60;
+  const eventQueue = new PriorityQueue<SimulationEvent>();
+  const patients: Record<string, SurgeryCase> = {};
+  let emergencyCounter = 0;
+
+  // Resource Pools with cost tracking
+  const createResourcePool = (prefix: string, count: number): Record<string, ResourceState> => {
+      const pool: Record<string, ResourceState> = {};
+      for (let i = 1; i <= count; i++) {
+          pool[`${prefix}-${i}`] = { id: `${prefix}-${i}`, isBusy: false, busyUntil: 0, totalBusyTime: 0, lastBusyStartTime: 0 };
+      }
+      return pool;
+  };
+  const orResources = createResourcePool('OR', params.numberOfORs);
+  const pacu1Beds = createResourcePool('P1', params.pacuParams?.phase1Beds || 0);
+  const pacu2Beds = createResourcePool('P2', params.pacuParams?.phase2Beds || 0);
+  const wardBeds = createResourcePool('W', params.wardParams?.totalBeds || params.beds || 10);
+  const nurses = createResourcePool('N', params.staffParams?.totalNurses || params.nurses || 5);
+
+  // Waiting Queues
+  const orWaitingQueue = new PriorityQueue<string>();
+  const pacu1WaitingQueue = new PriorityQueue<string>();
+  const pacu2WaitingQueue = new PriorityQueue<string>();
+  const wardWaitingQueue = new PriorityQueue<string>();
+  const nurseWaitingQueue = new PriorityQueue<{ patientId: string, phase: 'pacu1' | 'pacu2' }>();
+
+  // Statistics & Cost Collection
+  const completedSurgeries: SurgeryCase[] = [];
+  const cancelledSurgeries: SurgeryCase[] = [];
+  const wardTransferDelays: number[] = [];
+  const orWaitingTimes: number[] = [];
+  const occupancyData = {
+      pacu1: [{ time: 0, count: 0 }],
+      pacu2: [{ time: 0, count: 0 }],
+      ward: [{ time: 0, count: 0 }],
+      nurse: [{ time: 0, busyCount: 0 }],
+  };
+  let totalPacuBlockedTime = 0;
+  let lastStatsUpdateTime = 0;
+  // Initialize costs
+  let totalORCost = 0;
+  let totalPACU1Cost = 0;
+  let totalPACU2Cost = 0;
+  let totalNurseCost = 0;
+  let totalWardCost = 0;
+  let totalCancellationCost = 0;
+
+  // --- Helper Functions within Simulation Scope ---
+
+  const findAvailableResource = (pool: Record<string, ResourceState>): ResourceState | null => {
+    for (const id in pool) {
+      if (!pool[id].isBusy) return pool[id];
+    }
+    return null;
+  };
+
+  const addEvent = (time: number, type: SimulationEvent['type'], data?: Omit<SimulationEvent, 'time' | 'type'>) => {
+    if (time < currentTime) time = currentTime;
+    if (time >= simulationEndTime && type !== 'SIMULATION_END_CHECK') return;
+    eventQueue.enqueue({ time, type, ...data }, time);
+  };
+
+  const getPatient = (patientId: string): SurgeryCase | null => patients[patientId] || null;
+  const getPatientClass = (patient: SurgeryCase): PatientClass | null => params.patientClasses.find(p => p.id === patient.classId) || null;
+
+  // Helper to update resource busy time and cost
+  const updateResourceUsage = (resource: ResourceState, isEnding: boolean, time: number) => {
+      if (isEnding && resource.isBusy) {
+          const duration = time - resource.lastBusyStartTime;
+          if (duration > 0) {
+              resource.totalBusyTime += duration;
+              // Accumulate cost based on resource type
+              if (resource.id.startsWith('OR')) totalORCost += duration * (params.costParams?.costPerORMinute || 0);
+              else if (resource.id.startsWith('P1')) totalPACU1Cost += duration * (params.costParams?.costPerPACU1BedMinute || 0);
+              else if (resource.id.startsWith('P2')) totalPACU2Cost += duration * (params.costParams?.costPerPACU2BedMinute || 0);
+              else if (resource.id.startsWith('N')) totalNurseCost += duration * (params.costParams?.costPerNurseMinute || 0);
+              else if (resource.id.startsWith('W')) totalWardCost += duration * (params.costParams?.costPerWardBedMinute || 0);
+          }
+          resource.isBusy = false;
+          resource.assignedPatientId = undefined;
+      } else if (!isEnding && !resource.isBusy) {
+          resource.isBusy = true;
+          resource.lastBusyStartTime = time;
+      }
+  };
+
+  const updateStats = (time: number) => {
+      const duration = time - lastStatsUpdateTime;
+      if (duration <= 0) return;
+
+      const p1Busy = Object.values(pacu1Beds).filter(b => b.isBusy).length;
+      const p2Busy = Object.values(pacu2Beds).filter(b => b.isBusy).length;
+      const wardBusy = Object.values(wardBeds).filter(b => b.isBusy).length;
+      const nurseBusy = Object.values(nurses).filter(n => n.isBusy).length;
+      const waitingWardCount = wardWaitingQueue.length;
+
+      if (occupancyData.pacu1[occupancyData.pacu1.length - 1].count !== p1Busy) occupancyData.pacu1.push({ time, count: p1Busy });
+      if (occupancyData.pacu2[occupancyData.pacu2.length - 1].count !== p2Busy) occupancyData.pacu2.push({ time, count: p2Busy });
+      if (occupancyData.ward[occupancyData.ward.length - 1].count !== wardBusy) occupancyData.ward.push({ time, count: wardBusy });
+      if (occupancyData.nurse[occupancyData.nurse.length - 1].busyCount !== nurseBusy) occupancyData.nurse.push({ time, count: nurseBusy, busyCount: nurseBusy });
+
+      const totalPacuBeds = (params.pacuParams?.phase1Beds || 0) + (params.pacuParams?.phase2Beds || 0);
+      if (totalPacuBeds > 0) {
+          totalPacuBlockedTime += (waitingWardCount / totalPacuBeds) * duration;
+      }
+
+      lastStatsUpdateTime = time;
+  };
+
+  const tryAssignNurse = (patientId: string, phase: 'pacu1' | 'pacu2'): boolean => {
+      const patient = getPatient(patientId);
+      if (!patient) return false;
+      const availableNurse = findAvailableResource(nurses);
+      if (availableNurse) {
+          updateResourceUsage(availableNurse, false, currentTime); // Mark nurse as busy
+          availableNurse.assignedPatientId = patientId;
+          patient.assignedNurseId = availableNurse.id;
+          console.log(`Time ${currentTime.toFixed(2)}: Nurse ${availableNurse.id} assigned to Patient ${patientId} for ${phase}.`);
+          return true;
+      } else {
+          console.log(`Time ${currentTime.toFixed(2)}: Patient ${patientId} waiting for Nurse for ${phase}. Queue size: ${nurseWaitingQueue.length + 1}`);
+          nurseWaitingQueue.enqueue({ patientId, phase }, patient.priority);
+          return false;
+      }
+  };
+
+  const releaseNurse = (nurseId: string | undefined) => {
+      if (!nurseId || !nurses[nurseId]) return;
+      const nurse = nurses[nurseId];
+      console.log(`Time ${currentTime.toFixed(2)}: Nurse ${nurseId} released.`);
+      updateResourceUsage(nurse, true, currentTime); // Mark nurse as free and update cost
+      nurse.busyUntil = 0; // Reset busyUntil
+
+      if (!nurseWaitingQueue.isEmpty()) {
+          const waitingPatientInfo = nurseWaitingQueue.dequeue();
+          if (waitingPatientInfo) {
+              const waitingPatient = getPatient(waitingPatientInfo.patientId);
+              if (waitingPatient && waitingPatientInfo.phase === 'pacu1' && waitingPatient.currentState === 'waiting_pacu1') {
+                  addEvent(currentTime, 'SURGERY_END', { patientId: waitingPatient.id });
+              } else if (waitingPatient && waitingPatientInfo.phase === 'pacu2' && waitingPatient.currentState === 'waiting_pacu2') {
+                  addEvent(currentTime, 'PACU1_END', { patientId: waitingPatient.id });
+              }
+          }
+      }
+  };
+
+  // --- Generate Initial Events ---
+  let initialSurgeryList: SurgeryCaseInput[];
   if (params.surgeryScheduleType === 'custom' && params.customSurgeryList) {
-    surgeryList = params.customSurgeryList;
+    initialSurgeryList = params.customSurgeryList;
+  } else if (params.blockScheduleEnabled && params.orBlocks) {
+    initialSurgeryList = scheduleCasesInBlocks(params.orBlocks, params.patientClasses, params.patientClassDistribution, params.simulationDays);
   } else {
-    surgeryList = generateSurgeryList(params);
+    initialSurgeryList = generateSurgeryListTemplate(params);
   }
-  
-  // Sort surgery list by scheduled start time and priority
-  surgeryList.sort((a, b) => {
-    if (a.scheduledStartTime === b.scheduledStartTime) {
-      return a.priority - b.priority;
+
+  initialSurgeryList.forEach((s) => {
+    const patientClass = params.patientClasses.find(pc => pc.id === s.classId);
+    if (!patientClass) return;
+    const patientId = s.id || `S-${uuidv4()}`;
+    const arrivalTime = s.actualArrivalTime ?? s.scheduledStartTime - 30;
+    const duration = s.duration ?? Math.max(15, Math.round(normalRandom(patientClass.surgeryDurationMean, patientClass.surgeryDurationStd)));
+    const priority = s.priority ?? patientClass.priority;
+    patients[patientId] = { ...s, id: patientId, caseType: 'elective', actualArrivalTime: arrivalTime, duration: duration, priority: priority, currentState: 'scheduled', wardTransferDelay: 0, orWaitingTime: 0 };
+    addEvent(arrivalTime, 'PATIENT_ARRIVAL', { patientId });
+  });
+
+  if (params.emergencyParams?.enabled && params.emergencyParams?.arrivalRateMeanPerDay && params.emergencyParams?.arrivalRateMeanPerDay > 0) {
+      const meanArrivalsPerMinute = params.emergencyParams.arrivalRateMeanPerDay / (24 * 60);
+      const timeToFirstArrival = exponentialRandom(meanArrivalsPerMinute);
+      addEvent(timeToFirstArrival, 'EMERGENCY_ARRIVAL');
+  }
+  addEvent(simulationEndTime, 'SIMULATION_END_CHECK');
+
+  // --- Main Simulation Loop ---
+  while (!eventQueue.isEmpty()) {
+    const currentEvent = eventQueue.dequeue();
+    if (!currentEvent) break;
+
+    if (currentEvent.time > currentTime) {
+        updateStats(currentEvent.time);
+        currentTime = currentEvent.time;
     }
-    return a.scheduledStartTime - b.scheduledStartTime;
-  });
-  
-  const waitingTimes: number[] = [];
-  const orSchedules: Record<string, { endTime: number }> = {};
-  const orUtilizations: Record<string, number> = {};
-  const patientClassCounts: Record<string, number> = {};
-  
-  params.patientClasses.forEach(pc => {
-    patientClassCounts[pc.id] = 0;
-  });
-  
-  surgeryList.forEach(surgery => {
-    const { orRoom, scheduledStartTime, duration, classId } = surgery;
-    
-    // Initialize OR schedule if it doesn't exist
-    if (!orSchedules[orRoom]) {
-      orSchedules[orRoom] = { endTime: 0 };
-      orUtilizations[orRoom] = 0;
+    if (currentTime >= simulationEndTime && currentEvent.type !== 'SIMULATION_END_CHECK') continue;
+
+    const patient = currentEvent.patientId ? getPatient(currentEvent.patientId) : null;
+    const patientClass = patient ? getPatientClass(patient) : null;
+
+    switch (currentEvent.type) {
+      case 'PATIENT_ARRIVAL':
+        if (!patient) break;
+        patient.currentState = 'arrived';
+        console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} (${patient.caseType}) arrived.`);
+        const availableOR = findAvailableResource(orResources);
+        if (availableOR) {
+            updateResourceUsage(availableOR, false, currentTime); // Mark OR busy
+            availableOR.assignedPatientId = patient.id;
+            patient.orRoom = availableOR.id; patient.orStartTime = currentTime;
+            patient.orWaitingTime = Math.max(0, currentTime - patient.actualArrivalTime);
+            orWaitingTimes.push(patient.orWaitingTime);
+            patient.currentState = 'in_or';
+            const surgeryEndTime = currentTime + patient.duration;
+            availableOR.busyUntil = surgeryEndTime;
+            addEvent(surgeryEndTime, 'SURGERY_END', { patientId: patient.id, resourceId: availableOR.id });
+            console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} started surgery in ${availableOR.id}. Ends at ${surgeryEndTime.toFixed(2)}.`);
+        } else {
+            patient.currentState = 'waiting_or';
+            orWaitingQueue.enqueue(patient.id, patient.priority);
+            console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} waiting for OR. Queue size: ${orWaitingQueue.length}`);
+        }
+        break;
+
+      case 'OR_AVAILABLE':
+        const orId = currentEvent.resourceId;
+        if (!orId || !orResources[orId]) break;
+        console.log(`Time ${currentTime.toFixed(2)}: OR ${orId} available.`);
+        updateResourceUsage(orResources[orId], true, currentTime); // Mark OR free, update cost
+        orResources[orId].busyUntil = 0;
+
+        if (!orWaitingQueue.isEmpty()) {
+            const nextPatientId = orWaitingQueue.dequeue();
+            if (nextPatientId) {
+                 const nextPatient = getPatient(nextPatientId);
+                 if (nextPatient && nextPatient.currentState === 'waiting_or') {
+                    updateResourceUsage(orResources[orId], false, currentTime); // Mark OR busy
+                    orResources[orId].assignedPatientId = nextPatient.id;
+                    nextPatient.orRoom = orId; nextPatient.orStartTime = currentTime;
+                    nextPatient.orWaitingTime = Math.max(0, currentTime - nextPatient.actualArrivalTime);
+                    orWaitingTimes.push(nextPatient.orWaitingTime);
+                    nextPatient.currentState = 'in_or';
+                    const surgeryEndTime = currentTime + nextPatient.duration;
+                    orResources[orId].busyUntil = surgeryEndTime;
+                    addEvent(surgeryEndTime, 'SURGERY_END', { patientId: nextPatient.id, resourceId: orId });
+                    console.log(`Time ${currentTime.toFixed(2)}: Patient ${nextPatient.id} (from queue) started surgery in ${orId}. Ends at ${surgeryEndTime.toFixed(2)}.`);
+                 } else if (nextPatient) {
+                     console.warn(`Patient ${nextPatientId} from OR queue was not in waiting_or state (${nextPatient.currentState}). Re-queueing OR_AVAILABLE.`);
+                     addEvent(currentTime, 'OR_AVAILABLE', { resourceId: orId });
+                 }
+            }
+        }
+        break;
+
+      case 'SURGERY_END':
+        if (!patient || !patientClass) break;
+        const endedOrId = currentEvent.resourceId;
+        console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} finished surgery in ${endedOrId || patient.orRoom}.`);
+        patient.orEndTime = currentTime;
+        // OR release is now handled by OR_AVAILABLE event triggered below
+        if (endedOrId && orResources[endedOrId]) addEvent(currentTime, 'OR_AVAILABLE', { resourceId: endedOrId });
+        else if (patient.orRoom && orResources[patient.orRoom]) addEvent(currentTime, 'OR_AVAILABLE', { resourceId: patient.orRoom });
+
+        if (patientClass.processType === 'directTransfer') {
+            patient.currentState = 'discharged'; patient.dischargeTime = currentTime;
+            completedSurgeries.push(patient);
+            console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} (Direct Transfer) discharged/transferred.`);
+        } else {
+            const availableP1Bed = findAvailableResource(pacu1Beds);
+            if (availableP1Bed && tryAssignNurse(patient.id, 'pacu1')) {
+                updateResourceUsage(availableP1Bed, false, currentTime); // Mark P1 bed busy
+                availableP1Bed.assignedPatientId = patient.id;
+                patient.pacuPhase1BedId = availableP1Bed.id; patient.pacuPhase1StartTime = currentTime;
+                patient.currentState = 'in_pacu1';
+                const p1Duration = Math.max(10, Math.round(normalRandom(patientClass.pacuPhase1DurationMean, patientClass.pacuPhase1DurationStd)));
+                const p1EndTime = currentTime + p1Duration;
+                availableP1Bed.busyUntil = p1EndTime;
+                if (patient.assignedNurseId && nurses[patient.assignedNurseId]) nurses[patient.assignedNurseId].busyUntil = p1EndTime;
+                addEvent(p1EndTime, 'PACU1_END', { patientId: patient.id, resourceId: availableP1Bed.id });
+                console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} entered PACU Phase 1 in ${availableP1Bed.id}. Ends at ${p1EndTime.toFixed(2)}.`);
+            } else {
+                patient.currentState = 'waiting_pacu1';
+                pacu1WaitingQueue.enqueue(patient.id, patient.priority);
+                console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} waiting for PACU Phase 1 bed/nurse. BedQ: ${pacu1WaitingQueue.length}, NurseQ: ${nurseWaitingQueue.length}`);
+            }
+        }
+        break;
+
+      case 'PACU1_END':
+        if (!patient || !patientClass || !patient.pacuPhase1BedId) break;
+        const p1BedId = currentEvent.resourceId;
+        console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} finished PACU Phase 1 in ${p1BedId || patient.pacuPhase1BedId}.`);
+        patient.pacuPhase1EndTime = currentTime;
+        releaseNurse(patient.assignedNurseId);
+        patient.assignedNurseId = undefined;
+
+        if (p1BedId && pacu1Beds[p1BedId]) {
+            updateResourceUsage(pacu1Beds[p1BedId], true, currentTime); // Mark P1 bed free, update cost
+            pacu1Beds[p1BedId].busyUntil = 0;
+
+            if (!pacu1WaitingQueue.isEmpty()) {
+                const nextPatientId = pacu1WaitingQueue.dequeue();
+                if (nextPatientId) {
+                    const nextPatient = getPatient(nextPatientId);
+                    if (nextPatient && nextPatient.currentState === 'waiting_pacu1') {
+                         if (tryAssignNurse(nextPatient.id, 'pacu1')) {
+                            updateResourceUsage(pacu1Beds[p1BedId], false, currentTime); // Mark P1 bed busy
+                            pacu1Beds[p1BedId].assignedPatientId = nextPatient.id;
+                            nextPatient.pacuPhase1BedId = p1BedId; nextPatient.pacuPhase1StartTime = currentTime;
+                            nextPatient.currentState = 'in_pacu1';
+                            const pc = getPatientClass(nextPatient);
+                            const p1Duration = pc ? Math.max(10, Math.round(normalRandom(pc.pacuPhase1DurationMean, pc.pacuPhase1DurationStd))) : 60;
+                            const p1EndTime = currentTime + p1Duration;
+                            pacu1Beds[p1BedId].busyUntil = p1EndTime;
+                            if (nextPatient.assignedNurseId && nurses[nextPatient.assignedNurseId]) nurses[nextPatient.assignedNurseId].busyUntil = p1EndTime;
+                            addEvent(p1EndTime, 'PACU1_END', { patientId: nextPatient.id, resourceId: p1BedId });
+                            console.log(`Time ${currentTime.toFixed(2)}: Patient ${nextPatient.id} (from queue) entered PACU Phase 1 in ${p1BedId}. Ends at ${p1EndTime.toFixed(2)}.`);
+                         } else {
+                             pacu1WaitingQueue.enqueue(nextPatient.id, nextPatient.priority);
+                         }
+                    } else if (nextPatient) {
+                         console.warn(`Patient ${nextPatientId} from PACU1 queue was not in waiting_pacu1 state (${nextPatient.currentState}).`);
+                    }
+                }
+            }
+        }
+
+        if (patientClass.pacuPhase2DurationMean > 0) {
+             const availableP2Bed = findAvailableResource(pacu2Beds);
+             if (availableP2Bed && tryAssignNurse(patient.id, 'pacu2')) {
+                updateResourceUsage(availableP2Bed, false, currentTime); // Mark P2 bed busy
+                availableP2Bed.assignedPatientId = patient.id;
+                patient.pacuPhase2BedId = availableP2Bed.id; patient.pacuPhase2StartTime = currentTime;
+                patient.currentState = 'in_pacu2';
+                const p2Duration = Math.max(10, Math.round(normalRandom(patientClass.pacuPhase2DurationMean, patientClass.pacuPhase2DurationStd)));
+                const p2EndTime = currentTime + p2Duration;
+                availableP2Bed.busyUntil = p2EndTime;
+                if (patient.assignedNurseId && nurses[patient.assignedNurseId]) nurses[patient.assignedNurseId].busyUntil = p2EndTime;
+                addEvent(p2EndTime, 'PACU2_END', { patientId: patient.id, resourceId: availableP2Bed.id });
+                console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} entered PACU Phase 2 in ${availableP2Bed.id}. Ends at ${p2EndTime.toFixed(2)}.`);
+             } else {
+                patient.currentState = 'waiting_pacu2';
+                pacu2WaitingQueue.enqueue(patient.id, patient.priority);
+                console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} waiting for PACU Phase 2 bed/nurse. BedQ: ${pacu2WaitingQueue.length}, NurseQ: ${nurseWaitingQueue.length}`);
+             }
+        } else {
+            addEvent(currentTime, 'DISCHARGE_CRITERIA_MET', { patientId: patient.id });
+        }
+        break;
+
+      case 'PACU2_END':
+         if (!patient || !patientClass || !patient.pacuPhase2BedId) break;
+         const p2BedId = currentEvent.resourceId;
+         console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} finished PACU Phase 2 in ${p2BedId || patient.pacuPhase2BedId}.`);
+         patient.pacuPhase2EndTime = currentTime;
+         releaseNurse(patient.assignedNurseId);
+         patient.assignedNurseId = undefined;
+
+         if (p2BedId && pacu2Beds[p2BedId]) {
+            updateResourceUsage(pacu2Beds[p2BedId], true, currentTime); // Mark P2 bed free, update cost
+            pacu2Beds[p2BedId].busyUntil = 0;
+
+            if (!pacu2WaitingQueue.isEmpty()) {
+                const nextPatientId = pacu2WaitingQueue.dequeue();
+                if (nextPatientId) {
+                    const nextPatient = getPatient(nextPatientId);
+                    if (nextPatient && nextPatient.currentState === 'waiting_pacu2') {
+                        if (tryAssignNurse(nextPatient.id, 'pacu2')) {
+                            updateResourceUsage(pacu2Beds[p2BedId], false, currentTime); // Mark P2 bed busy
+                            pacu2Beds[p2BedId].assignedPatientId = nextPatient.id;
+                            nextPatient.pacuPhase2BedId = p2BedId; nextPatient.pacuPhase2StartTime = currentTime;
+                            nextPatient.currentState = 'in_pacu2';
+                            const pc = getPatientClass(nextPatient);
+                            const p2Duration = pc ? Math.max(10, Math.round(normalRandom(pc.pacuPhase2DurationMean, pc.pacuPhase2DurationStd))) : 60;
+                            const p2EndTime = currentTime + p2Duration;
+                            pacu2Beds[p2BedId].busyUntil = p2EndTime;
+                            if (nextPatient.assignedNurseId && nurses[nextPatient.assignedNurseId]) nurses[nextPatient.assignedNurseId].busyUntil = p2EndTime;
+                            addEvent(p2EndTime, 'PACU2_END', { patientId: nextPatient.id, resourceId: p2BedId });
+                            console.log(`Time ${currentTime.toFixed(2)}: Patient ${nextPatient.id} (from queue) entered PACU Phase 2 in ${p2BedId}. Ends at ${p2EndTime.toFixed(2)}.`);
+                        } else {
+                            pacu2WaitingQueue.enqueue(nextPatient.id, nextPatient.priority);
+                        }
+                    } else if (nextPatient) {
+                         console.warn(`Patient ${nextPatientId} from PACU2 queue was not in waiting_pacu2 state (${nextPatient.currentState}).`);
+                    }
+                }
+            }
+         }
+         addEvent(currentTime, 'DISCHARGE_CRITERIA_MET', { patientId: patient.id });
+         break;
+
+      case 'DISCHARGE_CRITERIA_MET':
+        if (!patient || !patientClass) break;
+        console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} met discharge criteria.`);
+        patient.readyForWardTime = currentTime;
+
+        if (patientClass.processType === 'outpatient') {
+            patient.currentState = 'discharged'; patient.dischargeTime = currentTime;
+            completedSurgeries.push(patient);
+            console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} (Outpatient) discharged home.`);
+        } else {
+            const availableWardBed = findAvailableResource(wardBeds);
+            if (availableWardBed) {
+                updateResourceUsage(availableWardBed, false, currentTime); // Mark Ward bed busy
+                availableWardBed.assignedPatientId = patient.id;
+                patient.wardBedId = availableWardBed.id; patient.wardArrivalTime = currentTime;
+                patient.currentState = 'in_ward';
+                patient.wardTransferDelay = 0;
+                wardTransferDelays.push(0);
+                patient.dischargeTime = currentTime; // Simplified ward stay
+                completedSurgeries.push(patient);
+                console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} transferred to Ward Bed ${availableWardBed.id}.`);
+                // Simplified: Release ward bed almost immediately for cost calculation
+                const wardEndTime = currentTime + 1; 
+                availableWardBed.busyUntil = wardEndTime;
+                addEvent(wardEndTime, 'WARD_BED_AVAILABLE', { resourceId: availableWardBed.id });
+            } else {
+                patient.currentState = 'waiting_ward';
+                wardWaitingQueue.enqueue(patient.id, patient.priority);
+                console.log(`Time ${currentTime.toFixed(2)}: Patient ${patient.id} waiting for Ward Bed. Queue size: ${wardWaitingQueue.length}. PACU BLOCKING.`);
+            }
+        }
+        break;
+
+      case 'WARD_BED_AVAILABLE':
+        const wardBedId = currentEvent.resourceId;
+        if (!wardBedId || !wardBeds[wardBedId]) break;
+        console.log(`Time ${currentTime.toFixed(2)}: Ward Bed ${wardBedId} available.`);
+        updateResourceUsage(wardBeds[wardBedId], true, currentTime); // Mark Ward bed free, update cost
+        wardBeds[wardBedId].busyUntil = 0;
+
+        if (!wardWaitingQueue.isEmpty()) {
+            const nextPatientId = wardWaitingQueue.dequeue();
+            if (nextPatientId) {
+                const nextPatient = getPatient(nextPatientId);
+                if (nextPatient && nextPatient.currentState === 'waiting_ward' && nextPatient.readyForWardTime !== undefined) {
+                    updateResourceUsage(wardBeds[wardBedId], false, currentTime); // Mark Ward bed busy
+                    wardBeds[wardBedId].assignedPatientId = nextPatient.id;
+                    nextPatient.wardBedId = wardBedId; nextPatient.wardArrivalTime = currentTime;
+                    nextPatient.currentState = 'in_ward';
+                    nextPatient.wardTransferDelay = currentTime - nextPatient.readyForWardTime;
+                    wardTransferDelays.push(nextPatient.wardTransferDelay);
+                    nextPatient.dischargeTime = currentTime; // Simplified
+                    completedSurgeries.push(nextPatient);
+                    console.log(`Time ${currentTime.toFixed(2)}: Patient ${nextPatient.id} (from queue) transferred to Ward Bed ${wardBedId}. Delay: ${nextPatient.wardTransferDelay.toFixed(2)} mins.`);
+                    const wardEndTime = currentTime + 1;
+                    wardBeds[wardBedId].busyUntil = wardEndTime;
+                    addEvent(wardEndTime, 'WARD_BED_AVAILABLE', { resourceId: wardBedId });
+                } else if (nextPatient) {
+                    console.warn(`Patient ${nextPatientId} from Ward queue was not in waiting_ward state (${nextPatient.currentState}). Re-queueing WARD_BED_AVAILABLE.`);
+                    addEvent(currentTime, 'WARD_BED_AVAILABLE', { resourceId: wardBedId });
+                }
+            }
+        }
+        break;
+
+      case 'EMERGENCY_ARRIVAL':
+        console.log(`Time ${currentTime.toFixed(2)}: Processing potential emergency arrival.`);
+        const emergencyClassId = weightedRandomSelection(params.emergencyParams?.patientClassDistribution || params.patientClassDistribution);
+        if (!emergencyClassId) break;
+        const emergencyClass = params.patientClasses.find(pc => pc.id === emergencyClassId);
+        if (!emergencyClass) break;
+        const emergencyPatientId = `E-${++emergencyCounter}`;
+        const emergencyDuration = Math.max(15, Math.round(normalRandom(emergencyClass.surgeryDurationMean, emergencyClass.surgeryDurationStd)));
+        const emergencyPriority = 0;
+        patients[emergencyPatientId] = { id: emergencyPatientId, caseType: 'emergency', classId: emergencyClassId, scheduledStartTime: currentTime, actualArrivalTime: currentTime, duration: emergencyDuration, orRoom: '', priority: emergencyPriority, currentState: 'scheduled', wardTransferDelay: 0, orWaitingTime: 0 };
+        console.log(`Time ${currentTime.toFixed(2)}: Generated Emergency Case ${emergencyPatientId} (Class ${emergencyClassId}).`);
+        addEvent(currentTime, 'PATIENT_ARRIVAL', { patientId: emergencyPatientId });
+        if (params.emergencyParams?.enabled && params.emergencyParams?.arrivalRateMeanPerDay && params.emergencyParams?.arrivalRateMeanPerDay > 0) {
+            const meanArrivalsPerMinute = params.emergencyParams.arrivalRateMeanPerDay / (24 * 60);
+            const timeToNextArrival = exponentialRandom(meanArrivalsPerMinute);
+            addEvent(currentTime + timeToNextArrival, 'EMERGENCY_ARRIVAL');
+            console.log(`Time ${currentTime.toFixed(2)}: Next emergency arrival scheduled at ${(currentTime + timeToNextArrival).toFixed(2)}.`);
+        }
+        break;
+
+      case 'SIMULATION_END_CHECK':
+          console.log(`Time ${currentTime.toFixed(2)}: Simulation end check.`);
+          updateStats(currentTime);
+          // Ensure any ongoing resource usage is accounted for up to simulation end time
+          Object.values(orResources).forEach(r => { if (r.isBusy) updateResourceUsage(r, true, currentTime); });
+          Object.values(pacu1Beds).forEach(r => { if (r.isBusy) updateResourceUsage(r, true, currentTime); });
+          Object.values(pacu2Beds).forEach(r => { if (r.isBusy) updateResourceUsage(r, true, currentTime); });
+          Object.values(wardBeds).forEach(r => { if (r.isBusy) updateResourceUsage(r, true, currentTime); });
+          Object.values(nurses).forEach(r => { if (r.isBusy) updateResourceUsage(r, true, currentTime); });
+          break;
     }
-    
-    // Calculate waiting time
-    const waitingTime = Math.max(0, orSchedules[orRoom].endTime - scheduledStartTime);
-    waitingTimes.push(waitingTime);
-    
-    // Update OR schedule
-    const actualStartTime = scheduledStartTime + waitingTime;
-    orSchedules[orRoom].endTime = actualStartTime + duration;
-    
-    // Update OR utilization
-    orUtilizations[orRoom] += duration;
-    
-    // Count patient classes
-    patientClassCounts[classId] = (patientClassCounts[classId] || 0) + 1;
+  } // End of simulation loop
+
+  // --- Post-Simulation Analysis ---
+  console.log("Simulation loop finished. Calculating results...");
+  if (lastStatsUpdateTime < simulationEndTime) updateStats(simulationEndTime);
+
+  const calculatePercentile = (data: number[], percentile: number): number => {
+    if (data.length === 0) return 0;
+    data.sort((a, b) => a - b);
+    const index = Math.min(data.length - 1, Math.floor(data.length * percentile));
+    return data[index] || 0;
+  };
+
+  const meanORWaitingTime = orWaitingTimes.length > 0 ? orWaitingTimes.reduce((s, t) => s + t, 0) / orWaitingTimes.length : 0;
+  const p95ORWaitingTime = calculatePercentile(orWaitingTimes, 0.95);
+  const meanWardTransferDelay = wardTransferDelays.length > 0 ? wardTransferDelays.reduce((s, t) => s + t, 0) / wardTransferDelays.length : 0;
+  const p95WardTransferDelay = calculatePercentile(wardTransferDelays, 0.95);
+  const pacuTimes = completedSurgeries.map(p => (p.pacuPhase2EndTime ?? p.pacuPhase1EndTime ?? 0) - (p.pacuPhase1StartTime ?? p.pacuPhase2StartTime ?? 0)).filter(t => t > 0);
+  const meanPacuTime = pacuTimes.length > 0 ? pacuTimes.reduce((s, t) => s + t, 0) / pacuTimes.length : 0;
+  const pacuBlockedTimeRatio = simulationEndTime > 0 ? totalPacuBlockedTime / simulationEndTime : 0;
+
+  const calculateTimeSeriesStats = (data: Array<{ time: number; count?: number; busyCount?: number }>, totalResource: number, simTime: number) => {
+      if (data.length <= 1 || totalResource <= 0 || simTime <= 0) return { mean: 0, peak: 0, totalBusyTime: 0 };
+      let totalWeightedCount = 0;
+      let peakCount = 0;
+      for (let i = 1; i < data.length; i++) {
+          const duration = data[i].time - data[i-1].time;
+          const count = data[i-1].count ?? data[i-1].busyCount ?? 0;
+          if (duration > 0) totalWeightedCount += count * duration;
+          peakCount = Math.max(peakCount, count);
+      }
+      const lastDuration = simTime - data[data.length - 1].time;
+      const lastCount = data[data.length - 1].count ?? data[data.length - 1].busyCount ?? 0;
+      if (lastDuration > 0) totalWeightedCount += lastCount * lastDuration;
+      peakCount = Math.max(peakCount, lastCount);
+      const meanCount = totalWeightedCount / simTime;
+      return { mean: meanCount / totalResource, peak: peakCount / totalResource, totalBusyTime: totalWeightedCount };
+  };
+
+  const pacu1Stats = calculateTimeSeriesStats(occupancyData.pacu1, params.pacuParams?.phase1Beds || 1, simulationEndTime);
+  const pacu2Stats = calculateTimeSeriesStats(occupancyData.pacu2, params.pacuParams?.phase2Beds || 1, simulationEndTime);
+  const wardStats = calculateTimeSeriesStats(occupancyData.ward, params.wardParams?.totalBeds || params.beds || 10, simulationEndTime);
+  const nurseStats = calculateTimeSeriesStats(occupancyData.nurse, params.staffParams?.totalNurses || params.nurses || 5, simulationEndTime);
+
+  // Calculate OR Utilization based on total busy time
+  const orUtilization: Record<string, number> = {};
+  let totalORBusyTime = 0;
+  Object.values(orResources).forEach(or => {
+      orUtilization[or.id] = simulationEndTime > 0 ? or.totalBusyTime / simulationEndTime : 0;
+      totalORBusyTime += or.totalBusyTime;
   });
+
+  // Final cost calculation
+  totalCancellationCost = cancelledSurgeries.length * (params.costParams?.costPerCancellation || 0);
+  const totalCost = totalORCost + totalPACU1Cost + totalPACU2Cost + totalNurseCost + totalWardCost + totalCancellationCost;
+
+  // TODO: Calculate Overtime Hours (requires shift definitions)
+  const overtimeHours = 0;
   
-  // Calculate total possible OR time
-  Object.keys(orUtilizations).forEach(orRoom => {
-    orUtilizations[orRoom] = orUtilizations[orRoom] / (params.simulationDays * 14 * 60); // 14 hours per day
-  });
-  
-  const totalSurgeries = surgeryList.length;
-  const averageWaitingTime = waitingTimes.length > 0 ? waitingTimes.reduce((sum, time) => sum + time, 0) / waitingTimes.length : 0;
-  const maxWaitingTime = waitingTimes.length > 0 ? Math.max(...waitingTimes) : 0;
-  
-  // Generate more realistic time-based utilization data
+  // Create time-of-day data for compatibility with current visualization components
   const timePoints = 24 * 4; // 15-minute intervals for a day
-  const dayTimePoints = 24 * 4 * params.simulationDays;
-  
-  // Create bed occupancy based on surgery activity and recovery times
-  const bedOccupancy = Array(timePoints).fill(0);
-  const nurseUtilization = Array(timePoints).fill(0);
+  const bedOccupancy: number[] = new Array(timePoints).fill(0);
+  const nurseUtilization: number[] = new Array(timePoints).fill(0);
   const orUtilizationByRoom: Record<string, number[]> = {};
   
-  // Initialize OR utilization arrays
+  // Initialize OR utilization arrays for compatibility
   for (let i = 1; i <= params.numberOfORs; i++) {
-    orUtilizationByRoom[`OR-${i}`] = Array(timePoints).fill(0);
+    orUtilizationByRoom[`OR-${i}`] = new Array(timePoints).fill(0);
   }
   
-  // Calculate occupancy based on surgeries and recovery times
-  surgeryList.forEach(surgery => {
-    const patientClass = params.patientClasses.find(pc => pc.id === surgery.classId);
-    if (!patientClass) return;
-    
-    // Find the day index and convert to 15-minute intervals
-    const dayIndex = Math.floor(surgery.scheduledStartTime / 1440);
-    const dayTime = surgery.scheduledStartTime % 1440; // Minutes since day start
-    const timeIndex = Math.floor(dayTime / 15); // Index for the 15-minute interval
-    
-    // Duration in 15-minute blocks
-    const durationBlocks = Math.ceil(surgery.duration / 15);
-    
-    // Add recovery time based on patient class
-    const recoveryTime = patientClass.averagePacuTime || 0;
-    const recoveryBlocks = Math.ceil(recoveryTime / 15);
-    
-    // Update OR utilization for this surgery's duration
-    const roomName = surgery.orRoom;
-    if (orUtilizationByRoom[roomName]) {
-      for (let i = 0; i < durationBlocks; i++) {
-        const idx = (timeIndex + i) % timePoints;
-        orUtilizationByRoom[roomName][idx] += 0.25; // Add 15 minutes worth of utilization
-      }
-    }
-    
-    // Update bed occupancy for surgery and recovery
-    // For outpatient procedures, we only consider PACU time, not regular bed occupancy
-    if (patientClass.processType !== 'outpatient') {
-      for (let i = 0; i < durationBlocks + recoveryBlocks; i++) {
-        const idx = (timeIndex + i) % timePoints;
-        // Increase occupancy, max 100%
-        bedOccupancy[idx] = Math.min(1, bedOccupancy[idx] + 1 / (params.beds || 10));
-      }
-    } else {
-      // For outpatient, only consider recovery time for bed occupancy
-      for (let i = durationBlocks; i < durationBlocks + recoveryBlocks; i++) {
-        const idx = (timeIndex + i) % timePoints;
-        // Less impact on beds for outpatient
-        bedOccupancy[idx] = Math.min(1, bedOccupancy[idx] + 0.5 / (params.beds || 10));
-      }
-    }
-    
-    // Update nurse utilization based on patient needs
-    const nurseNeeded = patientClass.processType === 'outpatient' ? 0.5 : 1; 
-    for (let i = 0; i < durationBlocks + recoveryBlocks; i++) {
-      const idx = (timeIndex + i) % timePoints;
-      nurseUtilization[idx] = Math.min(1, nurseUtilization[idx] + 
-        nurseNeeded / (params.nurses || 5) / (params.nursePatientRatio || 2));
-    }
-  });
-  
-  // Add some base utilization for nights (lower) and apply some randomness
-  const getNightFactor = (timeIndex: number) => {
-    const hour = Math.floor((timeIndex * 15) / 60);
-    // Lower utilization during night hours (22:00 - 06:00)
-    return (hour >= 22 || hour < 6) ? 0.3 : 1;
+  // Convert occupancy data to time-of-day data
+  const truncateTimePoints = (data: Array<{ time: number; count: number }>, maxPoints: number): Array<{ time: number; count: number }> => {
+    return data.filter(d => d.time < 1440);
   };
   
-  // Apply time-of-day patterns and add some noise
-  for (let i = 0; i < timePoints; i++) {
-    const nightFactor = getNightFactor(i);
-    
-    // Add base utilization + noise for beds
-    const baseBedUtilization = 0.1 * nightFactor; // Base bed utilization
-    bedOccupancy[i] = Math.min(1, bedOccupancy[i] + baseBedUtilization + (Math.random() * 0.05));
-    
-    // Add base utilization + noise for nurses
-    const baseNurseUtilization = 0.15 * nightFactor; // Base nurse utilization
-    nurseUtilization[i] = Math.min(1, nurseUtilization[i] + baseNurseUtilization + (Math.random() * 0.05));
-    
-    // OR utilization should be almost zero during night hours
-    Object.keys(orUtilizationByRoom).forEach(room => {
-      if (nightFactor < 1) {
-        orUtilizationByRoom[room][i] *= 0.1; // Minimal OR activity during night hours
-      } else {
-        // Add some random noise during day hours
-        orUtilizationByRoom[room][i] = Math.min(1, orUtilizationByRoom[room][i] + (Math.random() * 0.05));
+  const truncatedWardData = truncateTimePoints(occupancyData.ward, timePoints);
+  const truncatedNurseData = occupancyData.nurse.filter(d => d.time < 1440);
+  
+  // Add nurse utilization data based on time blocks
+  if (truncatedNurseData.length > 0) {
+    let lastTimeIndex = 0;
+    for (const entry of truncatedNurseData) {
+      const timeIndex = Math.min(timePoints - 1, Math.floor((entry.time % 1440) / 15));
+      if (timeIndex >= 0) {
+        // Fill in any gaps since last recorded time
+        for (let i = lastTimeIndex; i <= timeIndex; i++) {
+          nurseUtilization[i] = entry.busyCount / (params.staffParams?.totalNurses || params.nurses || 5);
+        }
+        lastTimeIndex = timeIndex + 1;
       }
-    });
+    }
   }
   
-  // Calculate average, max values
-  const meanBedOccupancy = bedOccupancy.reduce((sum, val) => sum + val, 0) / bedOccupancy.length;
-  const maxBedOccupancy = Math.max(...bedOccupancy);
-  const meanNurseUtilization = nurseUtilization.reduce((sum, val) => sum + val, 0) / nurseUtilization.length;
-  const maxNurseUtilization = Math.max(...nurseUtilization);
-  
-  // Calculate 95th percentile of wait time
-  const sortedWaitTimes = [...waitingTimes].sort((a, b) => a - b);
-  const p95Index = Math.floor(sortedWaitTimes.length * 0.95);
-  const p95WaitTime = sortedWaitTimes[p95Index] || averageWaitingTime * 1.5;
+  // Add bed occupancy data based on time blocks
+  if (truncatedWardData.length > 0) {
+    let lastTimeIndex = 0;
+    for (const entry of truncatedWardData) {
+      const timeIndex = Math.min(timePoints - 1, Math.floor((entry.time % 1440) / 15));
+      if (timeIndex >= 0) {
+        // Fill in any gaps since last recorded time
+        for (let i = lastTimeIndex; i <= timeIndex; i++) {
+          bedOccupancy[i] = entry.count / (params.wardParams?.totalBeds || params.beds || 10);
+        }
+        lastTimeIndex = timeIndex + 1;
+      }
+    }
+  }
   
   // Find peak times (times when bed occupancy > 80%)
   const peakTimes = bedOccupancy
-    .map((occ, idx) => ({ time: idx, occupancy: occ }))
+    .map((occ, idx) => ({ time: idx * 15, occupancy: occ }))
     .filter(item => item.occupancy > 0.8)
-    .sort((a, b) => b.occupancy - a.occupancy) // Sort by occupancy descending
-    .slice(0, 5); // Top 5 peaks
+    .sort((a, b) => b.occupancy - a.occupancy)
+    .slice(0, 5);
   
+  // Calculate patient class counts
+  const patientClassCounts: Record<string, number> = {};
+  completedSurgeries.forEach(surgery => {
+    patientClassCounts[surgery.classId] = (patientClassCounts[surgery.classId] || 0) + 1;
+  });
+
+  console.log(`Simulation complete. Completed: ${completedSurgeries.length}, Cancelled: ${cancelledSurgeries.length}`);
+  console.log(`Total Costs - OR: ${totalORCost.toFixed(2)}, P1: ${totalPACU1Cost.toFixed(2)}, P2: ${totalPACU2Cost.toFixed(2)}, Nurse: ${totalNurseCost.toFixed(2)}, Ward: ${totalWardCost.toFixed(2)}, Cancel: ${totalCancellationCost.toFixed(2)}, TOTAL: ${totalCost.toFixed(2)}`);
+
+  // Create complete results object including legacy fields for compatibility
   return {
-    surgeryList,
-    waitingTimes,
-    orUtilizations,
-    patientClassCounts,
-    averageWaitingTime,
-    maxWaitingTime,
-    totalSurgeries,
-    // Add the generated data
-    meanWaitTime: averageWaitingTime,
-    p95WaitTime,
-    meanBedOccupancy,
-    maxBedOccupancy,
-    meanNurseUtilization,
-    maxNurseUtilization,
+    completedSurgeries, 
+    cancelledSurgeries,
+    meanORWaitingTime, 
+    p95ORWaitingTime,
+    meanPacuTime, 
+    meanWardTransferDelay, 
+    p95WardTransferDelay,
+    pacuBlockedTimeRatio,
+    orUtilization,
+    meanPacuPhase1BedOccupancy: pacu1Stats.mean, 
+    peakPacuPhase1BedOccupancy: pacu1Stats.peak,
+    meanPacuPhase2BedOccupancy: pacu2Stats.mean, 
+    peakPacuPhase2BedOccupancy: pacu2Stats.peak,
+    meanWardBedOccupancy: wardStats.mean, 
+    peakWardBedOccupancy: wardStats.peak,
+    meanNurseUtilization: nurseStats.mean, 
+    peakNurseUtilization: nurseStats.peak,
+    overtimeHours,
+    pacuPhase1OccupancyData: occupancyData.pacu1,
+    pacuPhase2OccupancyData: occupancyData.pacu2,
+    wardOccupancyData: occupancyData.ward,
+    nurseUtilizationData: occupancyData.nurse,
+    wardTransferDelayDistribution: wardTransferDelays,
+    orWaitingTimeDistribution: orWaitingTimes,
+    totalCost,
+    costBreakdown: {
+        orCost: totalORCost,
+        pacu1Cost: totalPACU1Cost,
+        pacu2Cost: totalPACU2Cost,
+        nurseCost: totalNurseCost,
+        wardCost: totalWardCost,
+        cancellationCost: totalCancellationCost,
+    },
+    // Legacy fields for compatibility
+    surgeryList: [...completedSurgeries, ...cancelledSurgeries],
+    waitingTimes: orWaitingTimes,
+    orUtilizations: orUtilization,
+    patientClassCounts: patientClassCounts,
+    averageWaitingTime: meanORWaitingTime,
+    maxWaitingTime: Math.max(...orWaitingTimes, 0),
+    totalSurgeries: completedSurgeries.length + cancelledSurgeries.length,
+    meanWaitTime: meanORWaitingTime,
+    p95WaitTime: p95ORWaitingTime,
+    meanBedOccupancy: wardStats.mean,
+    maxBedOccupancy: wardStats.peak,
+    maxNurseUtilization: nurseStats.peak,
     patientTypeCount: patientClassCounts,
-    bedOccupancy,
-    nurseUtilization,
-    orUtilization: orUtilizationByRoom,
-    peakTimes,
+    bedOccupancy: bedOccupancy,
+    nurseUtilization: nurseUtilization,
+    peakTimes: peakTimes,
   };
 }
 
-// Export scheduleCasesInBlocks-funktio, jotta sitä voidaan käyttää muualla
-export function scheduleCasesInBlocks(
-  blocks: ORBlock[],
-  patientClasses: PatientClass[],
-  patientDistribution: Record<string, number>,
-  simulationDays: number
-): SurgeryCase[] {
-  const surgeryList: SurgeryCase[] = [];
-  let surgeryIdCounter = 1;
+// --- Helper Functions for Scheduling ---
 
-  // Jokaiselle päivälle simulaation aikana
+export function generateSurgeryListTemplate(params: SimulationParams): SurgeryCaseInput[] {
+  const { simulationDays, numberOfORs, patientClasses, patientClassDistribution } = params;
+  const avgDaily = params.surgeryScheduleTemplate?.averageDailySurgeries || params.averageDailySurgeries || 6;
+  const surgeryList: SurgeryCaseInput[] = [];
+  const surgeriesPerDay = Math.max(1, Math.round(avgDaily));
+
   for (let day = 0; day < simulationDays; day++) {
-    // Käsitellään kunkin päivän blokit
-    const dayBlocks = blocks.filter(block => block.day % simulationDays === day % simulationDays);
+    const surgeriesToday = surgeriesPerDay;
+    const timeBetweenStarts = Math.floor(480 / Math.max(1, Math.ceil(surgeriesToday / numberOfORs)));
+    let orIndex = 0; let timeOffset = 0;
+    for (let i = 0; i < surgeriesToday; i++) {
+      const classId = weightedRandomSelection(patientClassDistribution);
+      if (!classId) continue;
+      const orRoom = `OR-${(orIndex % numberOfORs) + 1}`;
+      const scheduledStartTime = day * 1440 + 480 + timeOffset;
+      surgeryList.push({ classId, scheduledStartTime, orRoom });
+      orIndex++;
+      if (orIndex % numberOfORs === 0) timeOffset += timeBetweenStarts;
+    }
+  }
+  return surgeryList;
+}
+
+export function scheduleCasesInBlocks(blocks: ORBlock[], patientClasses: PatientClass[], patientDistribution: Record<string, number>, simulationDays: number): SurgeryCaseInput[] {
+  const surgeryList: SurgeryCaseInput[] = [];
+  
+  for (let day = 0; day < simulationDays; day++) {
+    const dayBlocks = blocks.filter(block => block.day % simulationDays === day % simulationDays).sort((a, b) => a.start - b.start);
     
-    // Järjestetään blokit alkamisajan mukaan
-    dayBlocks.sort((a, b) => a.start - b.start);
-    
-    // Käsitellään jokainen blokki
     for (const block of dayBlocks) {
-      // Laske blokin kesto minuutteina
       const blockDurationMinutes = block.end - block.start;
-      
-      // Määritä kuinka monta leikkausta tähän blokkiin voidaan mahdollisesti tehdä
-      // Oletetaan keskimäärin 90 minuutin leikkauksia (tämä on karkea arvio)
-      const estimatedSurgeriesPerBlock = Math.floor(blockDurationMinutes / 90);
-      
-      if (estimatedSurgeriesPerBlock <= 0) continue;
-      
-      // Selvitetään mitkä potilasluokat ovat sallittuja tälle blokille
-      const allowedClasses = block.allowedClasses.filter(id => 
-        patientClasses.some(pc => pc.id === id)
-      );
+      const allowedClasses = block.allowedClasses.filter(id => patientClasses.some(pc => pc.id === id));
       
       if (allowedClasses.length === 0) continue;
       
-      // Lasketaan sallittujen luokkien todennäköisyyksien summa
-      const totalProbability = allowedClasses.reduce((sum, id) => 
-        sum + (patientDistribution[id] || 0), 0
-      );
-      
-      // Normalisoidaan todennäköisyydet tämän blokin sisällä
+      const totalProbability = allowedClasses.reduce((sum, id) => sum + (patientDistribution[id] || 0), 0);
       const normalizedDistribution: Record<string, number> = {};
-      allowedClasses.forEach(id => {
+      
+      allowedClasses.forEach(id => { 
         normalizedDistribution[id] = totalProbability > 0 
           ? (patientDistribution[id] || 0) / totalProbability 
-          : 1 / allowedClasses.length;
+          : 1 / allowedClasses.length; 
       });
       
-      // Luodaan leikkauksia tähän blokkiin
-      let currentTime = block.start;
+      let currentTimeInBlock = block.start;
       let remainingTime = blockDurationMinutes;
       
-      for (let i = 0; i < estimatedSurgeriesPerBlock && remainingTime > 30; i++) {
-        // Valitaan potilasluokka painotetulla satunnaisvalinnalla
+      while (remainingTime > 30) {
         const classId = weightedRandomSelection(normalizedDistribution);
-        
-        if (!classId) continue;
+        if (!classId) break;
         
         const patientClass = patientClasses.find(pc => pc.id === classId);
-        
         if (!patientClass) continue;
         
-        // Määritetään leikkauksen kesto potilasluokan mukaan
-        // Käytetään normaalijakaumaa vaihteluun
-        const meanDuration = patientClass.surgeryDurationMean;
-        const stdDuration = patientClass.surgeryDurationStd || 15;
+        let duration = Math.max(30, Math.round(normalRandom(patientClass.surgeryDurationMean, patientClass.surgeryDurationStd)));
+        const turnoverTime = (currentTimeInBlock > block.start) ? 15 : 0;
         
-        // Normaalijakauman mukainen satunnainen kesto, vähintään 30 min
-        let duration = Math.max(30, Math.round(normalRandom(meanDuration, stdDuration)));
-        
-        // Varmistetaan että leikkaus mahtuu jäljellä olevaan aikaan tai lyhennetään sitä
-        if (duration > remainingTime) {
-          duration = remainingTime;
+        if (duration + turnoverTime > remainingTime) {
+          if (remainingTime - turnoverTime < 30) break;
+          duration = remainingTime - turnoverTime;
+          if (duration < 30) break;
         }
         
-        // Luodaan uusi leikkaus
-        const surgery: SurgeryCase = {
-          id: `S-${day + 1}-${surgeryIdCounter++}`,
-          classId,
-          scheduledStartTime: day * 1440 + currentTime,
-          duration,
-          orRoom: block.orId,
-          priority: patientClass.priority || 3,
-          arrivalTime: day * 1440 + currentTime, // Oletetaan saapuvan juuri ennen leikkausta
-        };
+        const scheduledStartTime = day * 1440 + currentTimeInBlock + turnoverTime;
+        surgeryList.push({ classId, scheduledStartTime, duration, orRoom: block.orId });
         
-        surgeryList.push(surgery);
-        
-        // Päivitetään ajat
-        currentTime += duration;
-        remainingTime -= duration;
+        currentTimeInBlock += duration + turnoverTime;
+        remainingTime -= (duration + turnoverTime);
       }
     }
   }
@@ -469,31 +1063,10 @@ export function scheduleCasesInBlocks(
   return surgeryList;
 }
 
-// Apufunktio painotettuun satunnaisvalintaan
-function weightedRandomSelection(probabilities: Record<string, number>): string | null {
-  const items = Object.keys(probabilities);
-  if (items.length === 0) return null;
-  
-  const weights = Object.values(probabilities);
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-  
-  if (totalWeight <= 0) return items[Math.floor(Math.random() * items.length)];
-  
-  const randomValue = Math.random() * totalWeight;
-  let cumulativeWeight = 0;
-  
-  for (let i = 0; i < items.length; i++) {
-    cumulativeWeight += weights[i];
-    if (randomValue <= cumulativeWeight) return items[i];
-  }
-  
-  return items[items.length - 1];
-}
+// --- Legacy function for backward compatibility ---
 
-// Normaalisti jakautunut satunnaisluku
-function normalRandom(mean: number, stdDev: number): number {
-  const u1 = 1 - Math.random();
-  const u2 = 1 - Math.random();
-  const randStdNormal = Math.sqrt(-2.0 * Math.log(u1)) * Math.sin(2.0 * Math.PI * u2);
-  return mean + stdDev * randStdNormal;
+export function generateSurgeryList(
+  params: SimulationParams
+): SurgeryCase[] {
+  return generateSurgeryListTemplate(params) as SurgeryCase[];
 }
