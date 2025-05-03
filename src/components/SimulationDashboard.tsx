@@ -183,6 +183,7 @@ const SimulationDashboard: React.FC = () => {
 	// Handle block schedule changes
 	const handleBlockScheduleChange = useCallback(
 		(updatedBlocks: Block[]) => {
+			console.log("Block schedule changed:", updatedBlocks);
 			setBlocks(updatedBlocks);
 			setBlockScheduleEnabled(true);
 
@@ -191,6 +192,7 @@ const SimulationDashboard: React.FC = () => {
 				// Convert Block[] to ORBlock[] for the simulation
 				const orBlocks: ORBlock[] = updatedBlocks.map(convertBlockToORBlock);
 
+				console.log("Updated orBlocks in params:", orBlocks);
 				return {
 					...prev,
 					blockScheduleEnabled: true,
@@ -209,6 +211,7 @@ const SimulationDashboard: React.FC = () => {
 	// Generate surgery list from blocks
 	const generateSurgeryListFromBlocks = useCallback(
 		(blocksToUse: Block[]) => {
+			console.log("Generating surgery list from blocks:", blocksToUse);
 			const orBlocks = blocksToUse.map(convertBlockToORBlock);
 
 			if (orBlocks.length === 0) {
@@ -229,14 +232,18 @@ const SimulationDashboard: React.FC = () => {
 				params.simulationDays
 			);
 
+			console.log("Generated surgery list:", generatedSurgeryList);
 			setSurgeryList(generatedSurgeryList);
 
 			// Update simulation params with new surgery list
-			setParams((prev) => ({
-				...prev,
-				surgeryScheduleType: "custom",
-				customSurgeryList: generatedSurgeryList,
-			}));
+			setParams((prev) => {
+				console.log("Updating params with generated surgery list");
+				return {
+					...prev,
+					surgeryScheduleType: "custom",
+					customSurgeryList: generatedSurgeryList,
+				};
+			});
 
 			toast({
 				title: "Leikkauslista generoitu",
@@ -346,8 +353,14 @@ const SimulationDashboard: React.FC = () => {
 						scheduleType === "custom" ? surgeryList : undefined,
 				};
 
+				console.log("Running simulation with parameters:", simulationParams);
+				console.log("Block schedule enabled:", blockScheduleEnabled);
+				console.log("OR Blocks:", simulationParams.orBlocks);
+				console.log("Surgery list:", simulationParams.customSurgeryList);
+
 				// Run simulation with current parameters
 				const simulationResults = runSimulation(simulationParams);
+				console.log("Simulation results:", simulationResults);
 				setResults(simulationResults);
 				toast({
 					title: "Simulaatio valmis",
