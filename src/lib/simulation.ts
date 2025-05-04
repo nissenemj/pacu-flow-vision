@@ -125,7 +125,12 @@ export interface SimulationParams {
 	patientClassDistribution: Record<string, number>;
 	surgeryScheduleType: "template" | "custom";
 	customSurgeryList?: SurgeryCaseInput[];
-	surgeryScheduleTemplate: { averageDailySurgeries: number };
+	surgeryScheduleTemplate: {
+		averageDailySurgeries: number;
+		turnoverTime?: number; // Time between surgeries in minutes
+		orStartTime?: number; // OR start time in minutes from midnight (default: 465 = 7:45 AM)
+		orEndTime?: number; // OR end time in minutes from midnight (default: 960 = 4:00 PM)
+	};
 	blockScheduleEnabled: boolean;
 	orBlocks?: ORBlock[];
 	pacuParams: PacuParams;
@@ -478,7 +483,12 @@ export const defaultSimulationParams: SimulationParams = {
 	patientClasses: defaultPatientClasses,
 	patientClassDistribution: { HERKO: 0.25, OSASTO: 0.3, PAIKI: 0.3, PKL: 0.15 },
 	surgeryScheduleType: "template",
-	surgeryScheduleTemplate: { averageDailySurgeries: 6 },
+	surgeryScheduleTemplate: {
+		averageDailySurgeries: 6,
+		turnoverTime: 15, // 15 minutes turnover time between surgeries
+		orStartTime: 465, // 7:45 AM (465 minutes from midnight)
+		orEndTime: 960, // 4:00 PM (960 minutes from midnight)
+	},
 	blockScheduleEnabled: false,
 	pacuParams: { phase1Beds: 4, phase2Beds: 6 },
 	wardParams: { totalBeds: 20 },
@@ -2306,39 +2316,35 @@ export function generateSurgeryListTemplate(
 		params.averageDailySurgeries ||
 		8; // Increased default from 6 to 8
 	const surgeryList: SurgeryCaseInput[] = [];
+
+	// Define turnover time between surgeries (minutes)
+	const turnoverTime = params.surgeryScheduleTemplate?.turnoverTime || 15;
+
+	// Define OR start and end times
+	const orStartTime = 465; // 7:45 AM (465 minutes from midnight)
+	const orEndTime = 960; // 4:00 PM (960 minutes from midnight)
+
+	// Calculate average surgeries per OR per day
 	const surgeriesPerDay = Math.max(1, Math.round(avgDaily));
+	const surgeriesPerORPerDay = Math.ceil(surgeriesPerDay / numberOfORs);
 
 	for (let day = 0; day < simulationDays; day++) {
-		const surgeriesToday = surgeriesPerDay;
-		// Distribute surgeries across 8 hours (480 minutes) of OR time
-		const operatingMinutesPerDay = 480;
-		const timeBetweenStarts = Math.floor(
-			operatingMinutesPerDay /
-				Math.max(1, Math.ceil(surgeriesToday / numberOfORs))
-		);
-
-		// Start at 8:00 AM (480 minutes from midnight)
-		const dayStartTime = 480;
-
 		// For each OR, schedule surgeries throughout the day
 		for (let orNum = 1; orNum <= numberOfORs; orNum++) {
 			const orRoom = `OR-${orNum}`;
-			let currentTime = dayStartTime;
+			let currentTime = orStartTime;
 
-			// Schedule surgeries until we reach end of day or max surgeries per OR
-			const surgeriesPerOR = Math.ceil(surgeriesToday / numberOfORs);
-			for (let i = 0; i < surgeriesPerOR; i++) {
-				// Don't schedule past 4:00 PM (960 minutes from midnight)
-				if (currentTime >= 960) break;
-
+			// Schedule surgeries for this OR on this day
+			for (let i = 0; i < surgeriesPerORPerDay; i++) {
+				// Select patient class based on distribution
 				const classId = weightedRandomSelection(patientClassDistribution);
 				if (!classId) continue;
 				const patientClass = patientClasses.find((pc) => pc.id === classId);
 				if (!patientClass) continue;
 
-				// Generate duration based on patient class
+				// Generate realistic duration based on patient class
 				const duration = Math.max(
-					15,
+					30, // Minimum surgery duration 30 minutes
 					Math.round(
 						normalRandom(
 							patientClass.surgeryDurationMean,
@@ -2347,9 +2353,16 @@ export function generateSurgeryListTemplate(
 					)
 				);
 
+				// Check if there's enough time for this surgery before OR closing
+				// Include turnover time in the calculation
+				if (currentTime + duration + turnoverTime > orEndTime) {
+					// Not enough time for another surgery + turnover
+					break;
+				}
+
 				const scheduledStartTime = day * 1440 + currentTime;
 
-				// Add unique ID to make tracking easier
+				// Add surgery to list with unique ID
 				surgeryList.push({
 					id: `S-${day}-${orRoom}-${i}`,
 					classId,
@@ -2359,8 +2372,8 @@ export function generateSurgeryListTemplate(
 					priority: patientClass.priority || 3,
 				});
 
-				// Move to next surgery time, adding turnover time
-				currentTime += duration + 15; // 15 minutes turnover time
+				// Move to next surgery time, adding surgery duration and turnover time
+				currentTime += duration + turnoverTime;
 			}
 		}
 	}
@@ -2375,70 +2388,116 @@ export function scheduleCasesInBlocks(
 ): SurgeryCaseInput[] {
 	const surgeryList: SurgeryCaseInput[] = [];
 
+	// Define standard turnover time between surgeries (minutes)
+	const standardTurnoverTime = 15;
+
 	for (let day = 0; day < simulationDays; day++) {
+		// Group blocks by OR room for this day
+		const orBlocksMap: Record<string, ORBlock[]> = {};
+
+		// Get blocks for this day
 		const dayBlocks = blocks
 			.filter((block) => block.day % simulationDays === day % simulationDays)
-			.sort((a, b) => a.start - b.start);
-
-		for (const block of dayBlocks) {
-			const blockDurationMinutes = block.end - block.start;
-			const allowedClasses = block.allowedClasses.filter((id) =>
-				patientClasses.some((pc) => pc.id === id)
-			);
-
-			if (allowedClasses.length === 0) continue;
-
-			const totalProbability = allowedClasses.reduce(
-				(sum, id) => sum + (patientDistribution[id] || 0),
-				0
-			);
-			const normalizedDistribution: Record<string, number> = {};
-
-			allowedClasses.forEach((id) => {
-				normalizedDistribution[id] =
-					totalProbability > 0
-						? (patientDistribution[id] || 0) / totalProbability
-						: 1 / allowedClasses.length;
+			.sort((a, b) => {
+				// First sort by OR ID to group blocks by OR
+				if (a.orId < b.orId) return -1;
+				if (a.orId > b.orId) return 1;
+				// Then sort by start time within each OR
+				return a.start - b.start;
 			});
 
-			let currentTimeInBlock = block.start;
-			let remainingTime = blockDurationMinutes;
+		// Group blocks by OR room
+		dayBlocks.forEach((block) => {
+			if (!orBlocksMap[block.orId]) {
+				orBlocksMap[block.orId] = [];
+			}
+			orBlocksMap[block.orId].push(block);
+		});
 
-			while (remainingTime > 30) {
-				const classId = weightedRandomSelection(normalizedDistribution);
-				if (!classId) break;
+		// Process each OR's blocks
+		for (const orId in orBlocksMap) {
+			const orBlocks = orBlocksMap[orId];
+			let surgeryCount = 0;
 
-				const patientClass = patientClasses.find((pc) => pc.id === classId);
-				if (!patientClass) continue;
-
-				let duration = Math.max(
-					30,
-					Math.round(
-						normalRandom(
-							patientClass.surgeryDurationMean,
-							patientClass.surgeryDurationStd
-						)
-					)
+			// Process each block in this OR
+			for (const block of orBlocks) {
+				const blockDurationMinutes = block.end - block.start;
+				const allowedClasses = block.allowedClasses.filter((id) =>
+					patientClasses.some((pc) => pc.id === id)
 				);
-				const turnoverTime = currentTimeInBlock > block.start ? 15 : 0;
 
-				if (duration + turnoverTime > remainingTime) {
-					if (remainingTime - turnoverTime < 30) break;
-					duration = remainingTime - turnoverTime;
-					if (duration < 30) break;
-				}
+				if (allowedClasses.length === 0) continue;
 
-				const scheduledStartTime =
-					day * 1440 + currentTimeInBlock + turnoverTime;
-				surgeryList.push({
-					classId,
-					scheduledStartTime,
-					duration,
-					orRoom: block.orId,
+				// Normalize patient distribution for allowed classes in this block
+				const totalProbability = allowedClasses.reduce(
+					(sum, id) => sum + (patientDistribution[id] || 0),
+					0
+				);
+				const normalizedDistribution: Record<string, number> = {};
+
+				allowedClasses.forEach((id) => {
+					normalizedDistribution[id] =
+						totalProbability > 0
+							? (patientDistribution[id] || 0) / totalProbability
+							: 1 / allowedClasses.length;
 				});
 
-				currentTimeInBlock += duration + turnoverTime;
-				remainingTime -= duration + turnoverTime;
+				// Schedule surgeries within this block
+				let currentTimeInBlock = block.start;
+				let remainingTime = blockDurationMinutes;
+
+				while (remainingTime > 30) {
+					// Select patient class based on normalized distribution
+					const classId = weightedRandomSelection(normalizedDistribution);
+					if (!classId) break;
+
+					const patientClass = patientClasses.find((pc) => pc.id === classId);
+					if (!patientClass) continue;
+
+					// Generate realistic duration based on patient class
+					let duration = Math.max(
+						30, // Minimum surgery duration 30 minutes
+						Math.round(
+							normalRandom(
+								patientClass.surgeryDurationMean,
+								patientClass.surgeryDurationStd
+							)
+						)
+					);
+
+					// Apply turnover time (except for first surgery in block)
+					const turnoverTime =
+						currentTimeInBlock > block.start ? standardTurnoverTime : 0;
+
+					// Check if there's enough time for this surgery + turnover
+					if (duration + turnoverTime > remainingTime) {
+						// Not enough time for full surgery, check if we can fit a shorter one
+						if (remainingTime - turnoverTime < 30) break; // Not enough time for even a minimum surgery
+
+						// Adjust duration to fit remaining time
+						duration = remainingTime - turnoverTime;
+						if (duration < 30) break; // Ensure minimum surgery duration
+					}
+
+					// Calculate actual start time including day offset
+					const scheduledStartTime =
+						day * 1440 + currentTimeInBlock + turnoverTime;
+
+					// Add surgery to list with unique ID
+					surgeryList.push({
+						id: `B-${day}-${block.orId}-${surgeryCount}`,
+						classId,
+						scheduledStartTime,
+						duration,
+						orRoom: block.orId,
+						priority: patientClass.priority || 3,
+					});
+
+					// Update time tracking
+					currentTimeInBlock += duration + turnoverTime;
+					remainingTime = block.end - currentTimeInBlock;
+					surgeryCount++;
+				}
 			}
 		}
 	}
