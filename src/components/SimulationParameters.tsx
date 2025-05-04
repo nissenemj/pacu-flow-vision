@@ -362,6 +362,53 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
 									</div>
 								</div>
 
+								<div>
+									<Label htmlFor="cancellationRisk">
+										Peruutusten todennäköisyys (%)
+									</Label>
+									<div className="flex items-center gap-2">
+										<Slider
+											id="cancellationRisk"
+											min={0}
+											max={30}
+											step={1}
+											value={[
+												Math.round(
+													(params.patientClasses.reduce(
+														(sum, pc) => sum + (pc.cancellationRisk || 0),
+														0
+													) /
+														params.patientClasses.length) *
+														100
+												),
+											]}
+											onValueChange={(value) => {
+												// Update cancellation risk for all patient classes
+												const riskFactor = value[0] / 100;
+												const updatedClasses = params.patientClasses.map(
+													(pc) => ({
+														...pc,
+														cancellationRisk: riskFactor,
+													})
+												);
+												onParamChange("patientClasses", updatedClasses);
+											}}
+											className="flex-1"
+										/>
+										<span className="w-10 text-center">
+											{Math.round(
+												(params.patientClasses.reduce(
+													(sum, pc) => sum + (pc.cancellationRisk || 0),
+													0
+												) /
+													params.patientClasses.length) *
+													100
+											)}
+											%
+										</span>
+									</div>
+								</div>
+
 								{params.surgeryScheduleType === "template" && (
 									<div>
 										<Label htmlFor="surgeries">Leikkauksia/päivä</Label>
