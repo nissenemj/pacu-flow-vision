@@ -71,7 +71,14 @@ const defaultORs: ORRoom[] = [
 ];
 
 // Template blocks per OR
-const createTemplateBlocks = (orId: string): Block[] => {
+const createTemplateBlocks = (
+	orId: string,
+	patientClasses: PatientClass[]
+): Block[] => {
+	// Get patient class IDs
+	const classIds = patientClasses.map((pc) => pc.id);
+
+	// Create default blocks with actual patient class IDs
 	return [
 		{
 			id: `${orId}-1`,
@@ -79,8 +86,8 @@ const createTemplateBlocks = (orId: string): Block[] => {
 			start: 7 * 60,
 			end: 10 * 60,
 			label: "Aamu",
-			allowedProcedures: ["A"],
-			allowedClasses: ["A"],
+			allowedProcedures: classIds.length > 0 ? [classIds[0]] : [],
+			allowedClasses: classIds.length > 0 ? [classIds[0]] : [],
 			day: 0,
 		},
 		{
@@ -89,8 +96,10 @@ const createTemplateBlocks = (orId: string): Block[] => {
 			start: 10 * 60,
 			end: 13 * 60,
 			label: "Keskipäivä",
-			allowedProcedures: ["A", "D"],
-			allowedClasses: ["A", "D"],
+			allowedProcedures:
+				classIds.length > 1 ? [classIds[0], classIds[1]] : classIds,
+			allowedClasses:
+				classIds.length > 1 ? [classIds[0], classIds[1]] : classIds,
 			day: 0,
 		},
 		{
@@ -99,8 +108,18 @@ const createTemplateBlocks = (orId: string): Block[] => {
 			start: 13 * 60,
 			end: 15 * 60,
 			label: "Iltapäivä",
-			allowedProcedures: ["D"],
-			allowedClasses: ["D"],
+			allowedProcedures:
+				classIds.length > 2
+					? [classIds[2]]
+					: classIds.length > 0
+					? [classIds[0]]
+					: [],
+			allowedClasses:
+				classIds.length > 2
+					? [classIds[2]]
+					: classIds.length > 0
+					? [classIds[0]]
+					: [],
 			day: 0,
 		},
 	];
@@ -125,14 +144,17 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
 	useEffect(() => {
 		let initialBlocks: Block[] = [];
 		orRooms.forEach((or) => {
-			initialBlocks = [...initialBlocks, ...createTemplateBlocks(or.id)];
+			initialBlocks = [
+				...initialBlocks,
+				...createTemplateBlocks(or.id, patientClasses),
+			];
 		});
 		console.log("Initializing blocks:", initialBlocks);
 		setBlocks(initialBlocks);
 
 		// Notify parent component about initial blocks
 		onScheduleChange(initialBlocks);
-	}, []);
+	}, [patientClasses]);
 
 	// Update parent component when blocks change
 	useEffect(() => {
@@ -153,7 +175,7 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
 		setORRooms([...orRooms, newOR]);
 
 		// Add template blocks for the new OR
-		const newBlocks = createTemplateBlocks(nextId);
+		const newBlocks = createTemplateBlocks(nextId, patientClasses);
 		setBlocks([...blocks, ...newBlocks]);
 
 		toast({
@@ -207,14 +229,17 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
 			return;
 		}
 
+		// Get all patient class IDs
+		const classIds = patientClasses.map((pc) => pc.id);
+
 		const newBlock: Block = {
 			id: `${orId}-${blocks.filter((b) => b.orId === orId).length + 1}`,
 			orId: orId,
 			start: startTime,
 			end: endTime,
 			label: "Uusi blokki",
-			allowedProcedures: ["A", "B", "C", "D"], // Allow all by default
-			allowedClasses: ["A", "B", "C", "D"], // Keep both fields in sync
+			allowedProcedures: classIds, // Allow all patient classes by default
+			allowedClasses: classIds, // Keep both fields in sync
 			day: 0,
 		};
 

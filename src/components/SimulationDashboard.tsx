@@ -184,13 +184,34 @@ const SimulationDashboard: React.FC = () => {
 	const handleBlockScheduleChange = useCallback(
 		(updatedBlocks: Block[]) => {
 			console.log("Block schedule changed:", updatedBlocks);
-			setBlocks(updatedBlocks);
+
+			// Make sure blocks have valid patient class IDs
+			const validBlocks = updatedBlocks.map((block) => {
+				// Filter out any patient class IDs that don't exist
+				const validAllowedClasses = block.allowedClasses.filter((classId) =>
+					params.patientClasses.some((pc) => pc.id === classId)
+				);
+
+				// If no valid classes, use all available classes
+				const allowedClasses =
+					validAllowedClasses.length > 0
+						? validAllowedClasses
+						: params.patientClasses.map((pc) => pc.id);
+
+				return {
+					...block,
+					allowedClasses,
+					allowedProcedures: allowedClasses, // Keep both fields in sync
+				};
+			});
+
+			setBlocks(validBlocks);
 			setBlockScheduleEnabled(true);
 
 			// Update params with new blocks
 			setParams((prev) => {
 				// Convert Block[] to ORBlock[] for the simulation
-				const orBlocks: ORBlock[] = updatedBlocks.map(convertBlockToORBlock);
+				const orBlocks: ORBlock[] = validBlocks.map(convertBlockToORBlock);
 
 				console.log("Updated orBlocks in params:", orBlocks);
 				return {
@@ -202,17 +223,38 @@ const SimulationDashboard: React.FC = () => {
 
 			// If we're using the block-based scheduling, update the surgery list based on blocks
 			if (scheduleType === "template") {
-				generateSurgeryListFromBlocks(updatedBlocks);
+				generateSurgeryListFromBlocks(validBlocks);
 			}
 		},
-		[scheduleType]
+		[scheduleType, params.patientClasses]
 	);
 
 	// Generate surgery list from blocks
 	const generateSurgeryListFromBlocks = useCallback(
 		(blocksToUse: Block[]) => {
 			console.log("Generating surgery list from blocks:", blocksToUse);
-			const orBlocks = blocksToUse.map(convertBlockToORBlock);
+
+			// Make sure blocks have valid patient class IDs
+			const validBlocks = blocksToUse.map((block) => {
+				// Filter out any patient class IDs that don't exist
+				const validAllowedClasses = block.allowedClasses.filter((classId) =>
+					params.patientClasses.some((pc) => pc.id === classId)
+				);
+
+				// If no valid classes, use all available classes
+				const allowedClasses =
+					validAllowedClasses.length > 0
+						? validAllowedClasses
+						: params.patientClasses.map((pc) => pc.id);
+
+				return {
+					...block,
+					allowedClasses,
+					allowedProcedures: allowedClasses, // Keep both fields in sync
+				};
+			});
+
+			const orBlocks = validBlocks.map(convertBlockToORBlock);
 
 			if (orBlocks.length === 0) {
 				toast({
@@ -231,6 +273,8 @@ const SimulationDashboard: React.FC = () => {
 				params.patientClassDistribution,
 				params.simulationDays
 			);
+
+			console.log("Generated surgery list from blocks:", generatedSurgeryList);
 
 			console.log("Generated surgery list:", generatedSurgeryList);
 			setSurgeryList(generatedSurgeryList);
@@ -368,7 +412,20 @@ const SimulationDashboard: React.FC = () => {
 				const simulationParams = {
 					...params,
 					blockScheduleEnabled: blockScheduleEnabled,
-					orBlocks: blocks.map(convertBlockToORBlock),
+					orBlocks: blocks.map((block) => {
+						// Make sure each block has valid patient class IDs
+						const validAllowedClasses = block.allowedClasses.filter((classId) =>
+							params.patientClasses.some((pc) => pc.id === classId)
+						);
+
+						return {
+							...convertBlockToORBlock(block),
+							allowedClasses:
+								validAllowedClasses.length > 0
+									? validAllowedClasses
+									: params.patientClasses.map((pc) => pc.id),
+						};
+					}),
 					surgeryScheduleType: scheduleType,
 					customSurgeryList:
 						scheduleType === "custom" ? surgeryList : generatedSurgeryList,
