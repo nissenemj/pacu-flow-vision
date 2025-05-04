@@ -215,6 +215,15 @@ const SimulationDashboard: React.FC = () => {
 
 				console.log("Updated orBlocks in params:", orBlocks);
 
+				// Count unique OR rooms from blocks
+				const uniqueORs = new Set<string>();
+				validBlocks.forEach((block) => uniqueORs.add(block.orId));
+				const numberOfORs = Math.max(prev.numberOfORs, uniqueORs.size);
+
+				console.log(
+					`Updated number of ORs to ${numberOfORs} (${uniqueORs.size} from blocks, ${prev.numberOfORs} from params)`
+				);
+
 				// Calculate new patient class distribution based on blocks
 				const newDistribution = { ...prev.patientClassDistribution };
 				const classMinutes: Record<string, number> = {};
@@ -264,6 +273,7 @@ const SimulationDashboard: React.FC = () => {
 
 				return {
 					...prev,
+					numberOfORs: numberOfORs, // Update number of ORs based on blocks
 					blockScheduleEnabled: true,
 					orBlocks: orBlocks,
 					patientClassDistribution: newDistribution,
@@ -457,9 +467,19 @@ const SimulationDashboard: React.FC = () => {
 					setSurgeryList(generatedSurgeryList);
 				}
 
+				// Count unique OR rooms from blocks
+				const uniqueORs = new Set<string>();
+				blocks.forEach((block) => uniqueORs.add(block.orId));
+				const numberOfORs = Math.max(params.numberOfORs, uniqueORs.size);
+
+				console.log(
+					`Using ${numberOfORs} ORs for simulation (${uniqueORs.size} from blocks, ${params.numberOfORs} from params)`
+				);
+
 				// Ensure we're using the right parameters
 				const simulationParams = {
 					...params,
+					numberOfORs: numberOfORs, // Update number of ORs based on blocks
 					blockScheduleEnabled: blockScheduleEnabled,
 					orBlocks: blocks.map((block) => {
 						// Make sure each block has valid patient class IDs
@@ -542,9 +562,19 @@ const SimulationDashboard: React.FC = () => {
 					id: surgery.id || `S-${uuidv4().substring(0, 8)}`,
 				}));
 
+				// Count unique OR rooms from blocks
+				const uniqueORs = new Set<string>();
+				blocks.forEach((block) => uniqueORs.add(block.orId));
+				const numberOfORs = Math.max(params.numberOfORs, uniqueORs.size);
+
+				console.log(
+					`Using ${numberOfORs} ORs for optimization (${uniqueORs.size} from blocks, ${params.numberOfORs} from params)`
+				);
+
 				// Setup simulation parameters for optimization
 				const simulationParams = {
 					...params,
+					numberOfORs: numberOfORs, // Update number of ORs based on blocks
 					blockScheduleEnabled: blockScheduleEnabled,
 					orBlocks: blocks.map(convertBlockToORBlock),
 					surgeryScheduleType: "custom" as const, // Always use custom for optimization
