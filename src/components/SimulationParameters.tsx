@@ -205,7 +205,7 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
 					<TabsTrigger value="nurses">Hoitajat</TabsTrigger>
 					<TabsTrigger value="patients">Potilasjakauma</TabsTrigger>
 					<TabsTrigger value="schedule">Leikkauslista</TabsTrigger>
-					<TabsTrigger value="blocks">Salisuunnittelu</TabsTrigger>
+					{/* <TabsTrigger value="blocks">Salisuunnittelu</TabsTrigger> */}
 				</TabsList>
 
 				<TabsContent value="nurses">
@@ -290,6 +290,58 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
 									</div>
 								</div>
 
+								<div>
+									<Label htmlFor="emergencyRate">
+										Päivystysten määrä päivässä
+									</Label>
+									<div className="flex items-center gap-2">
+										<Slider
+											id="emergencyRate"
+											min={0}
+											max={5}
+											step={0.5}
+											value={[params.emergencyParams.arrivalRateMeanPerDay]}
+											onValueChange={(value) =>
+												onParamChange("emergencyParams", {
+													...params.emergencyParams,
+													arrivalRateMeanPerDay: value[0],
+												})
+											}
+											className="flex-1"
+										/>
+										<span className="w-10 text-center">
+											{params.emergencyParams.arrivalRateMeanPerDay}
+										</span>
+									</div>
+								</div>
+
+								<div>
+									<Label htmlFor="surgeryOverrunRisk">
+										Leikkausten yliajalle menemisen riski (%)
+									</Label>
+									<div className="flex items-center gap-2">
+										<Slider
+											id="surgeryOverrunRisk"
+											min={0}
+											max={50}
+											step={1}
+											value={[
+												params.surgeryScheduleTemplate.overrunRiskPercent || 10,
+											]}
+											onValueChange={(value) =>
+												onParamChange("surgeryScheduleTemplate", {
+													...params.surgeryScheduleTemplate,
+													overrunRiskPercent: value[0],
+												})
+											}
+											className="flex-1"
+										/>
+										<span className="w-10 text-center">
+											{params.surgeryScheduleTemplate.overrunRiskPercent || 10}%
+										</span>
+									</div>
+								</div>
+
 								{params.surgeryScheduleType === "template" && (
 									<div>
 										<Label htmlFor="surgeries">Leikkauksia/päivä</Label>
@@ -339,72 +391,167 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
 				</TabsContent>
 
 				<TabsContent value="patients">
-					<Card>
-						<CardHeader className="pb-2">
-							<CardTitle className="text-lg">Potilasluokkajakauma</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<div className="space-y-4">
-								{params.patientClasses.map((patientClass: PatientClass) => (
-									<div key={patientClass.id}>
-										<div className="flex items-center justify-between mb-1">
-											<Label
-												htmlFor={`class-${patientClass.id}`}
-												className="flex items-center gap-2"
-											>
-												<span
-													className="block w-3 h-3 rounded-full"
-													style={{ backgroundColor: patientClass.color }}
-												/>
-												{patientClass.name}
-											</Label>
-											<span className="text-sm">
-												{Math.round(
-													params.patientClassDistribution[patientClass.id] * 100
-												)}
-												%
-											</span>
-										</div>
-										<Slider
-											id={`class-${patientClass.id}`}
-											min={0}
-											max={1}
-											step={0.01}
-											value={[params.patientClassDistribution[patientClass.id]]}
-											onValueChange={(value) =>
-												onPatientDistributionChange(patientClass.id, value[0])
-											}
-											className="flex-1"
-										/>
-									</div>
-								))}
-
-								<div className="pt-2">
-									<div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden flex">
-										{params.patientClasses.map((patientClass: PatientClass) => (
-											<div
-												key={patientClass.id}
-												style={{
-													backgroundColor: patientClass.color,
-													width: `${
+					<div className="grid gap-4 md:grid-cols-2">
+						<Card>
+							<CardHeader className="pb-2">
+								<CardTitle className="text-lg">Potilasluokkajakauma</CardTitle>
+							</CardHeader>
+							<CardContent>
+								<div className="space-y-4">
+									{params.patientClasses.map((patientClass: PatientClass) => (
+										<div key={patientClass.id}>
+											<div className="flex items-center justify-between mb-1">
+												<Label
+													htmlFor={`class-${patientClass.id}`}
+													className="flex items-center gap-2"
+												>
+													<span
+														className="block w-3 h-3 rounded-full"
+														style={{ backgroundColor: patientClass.color }}
+													/>
+													{patientClass.name}
+												</Label>
+												<span className="text-sm">
+													{Math.round(
 														params.patientClassDistribution[patientClass.id] *
-														100
-													}%`,
-												}}
-												className="h-full"
+															100
+													)}
+													%
+												</span>
+											</div>
+											<Slider
+												id={`class-${patientClass.id}`}
+												min={0}
+												max={1}
+												step={0.01}
+												value={[
+													params.patientClassDistribution[patientClass.id],
+												]}
+												onValueChange={(value) =>
+													onPatientDistributionChange(patientClass.id, value[0])
+												}
+												className="flex-1"
 											/>
-										))}
+										</div>
+									))}
+
+									<div className="pt-2">
+										<div className="h-2 w-full rounded-full bg-gray-200 overflow-hidden flex">
+											{params.patientClasses.map(
+												(patientClass: PatientClass) => (
+													<div
+														key={patientClass.id}
+														style={{
+															backgroundColor: patientClass.color,
+															width: `${
+																params.patientClassDistribution[
+																	patientClass.id
+																] * 100
+															}%`,
+														}}
+														className="h-full"
+													/>
+												)
+											)}
+										</div>
+										{!isValidDistribution && (
+											<p className="text-red-500 text-sm mt-2">
+												Yhteensä: {Math.round(totalPercentage * 100)}%. Summan
+												pitäisi olla 100%.
+											</p>
+										)}
 									</div>
-									{!isValidDistribution && (
-										<p className="text-red-500 text-sm mt-2">
-											Yhteensä: {Math.round(totalPercentage * 100)}%. Summan
-											pitäisi olla 100%.
-										</p>
-									)}
 								</div>
-							</div>
-						</CardContent>
-					</Card>
+							</CardContent>
+						</Card>
+
+						<Card>
+							<CardHeader className="pb-2">
+								<CardTitle className="text-lg">
+									Leikkausten pituusjakauma
+								</CardTitle>
+							</CardHeader>
+							<CardContent>
+								<div className="space-y-4">
+									{params.patientClasses.map((patientClass: PatientClass) => (
+										<div key={patientClass.id}>
+											<div className="flex items-center justify-between mb-1">
+												<Label
+													htmlFor={`duration-${patientClass.id}`}
+													className="flex items-center gap-2"
+												>
+													<span
+														className="block w-3 h-3 rounded-full"
+														style={{ backgroundColor: patientClass.color }}
+													/>
+													{patientClass.name}
+												</Label>
+												<span className="text-sm">
+													{patientClass.surgeryDurationMean} min ±{" "}
+													{patientClass.surgeryDurationStd} min
+												</span>
+											</div>
+											<div className="flex items-center gap-2">
+												<Slider
+													id={`duration-${patientClass.id}`}
+													min={30}
+													max={360}
+													step={15}
+													value={[patientClass.surgeryDurationMean]}
+													onValueChange={(value) => {
+														const updatedClasses = [...params.patientClasses];
+														const index = updatedClasses.findIndex(
+															(pc) => pc.id === patientClass.id
+														);
+														if (index >= 0) {
+															updatedClasses[index] = {
+																...updatedClasses[index],
+																surgeryDurationMean: value[0],
+															};
+															onParamChange("patientClasses", updatedClasses);
+														}
+													}}
+													className="flex-1"
+												/>
+											</div>
+											<div className="flex items-center gap-2 mt-1">
+												<Label
+													htmlFor={`std-${patientClass.id}`}
+													className="text-xs w-20"
+												>
+													Hajonta:
+												</Label>
+												<Slider
+													id={`std-${patientClass.id}`}
+													min={5}
+													max={120}
+													step={5}
+													value={[patientClass.surgeryDurationStd]}
+													onValueChange={(value) => {
+														const updatedClasses = [...params.patientClasses];
+														const index = updatedClasses.findIndex(
+															(pc) => pc.id === patientClass.id
+														);
+														if (index >= 0) {
+															updatedClasses[index] = {
+																...updatedClasses[index],
+																surgeryDurationStd: value[0],
+															};
+															onParamChange("patientClasses", updatedClasses);
+														}
+													}}
+													className="flex-1"
+												/>
+												<span className="text-xs w-10 text-right">
+													±{patientClass.surgeryDurationStd}
+												</span>
+											</div>
+										</div>
+									))}
+								</div>
+							</CardContent>
+						</Card>
+					</div>
 				</TabsContent>
 
 				<TabsContent value="schedule">

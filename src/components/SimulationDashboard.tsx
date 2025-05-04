@@ -92,7 +92,7 @@ const SimulationDashboard: React.FC = () => {
 	const [scheduleType, setScheduleType] = useState<"template" | "custom">(
 		"template"
 	);
-	const [blockScheduleEnabled, setBlockScheduleEnabled] = useState(true);
+	const [blockScheduleEnabled, setBlockScheduleEnabled] = useState(false);
 
 	// State for optimization parameters
 	const [optParams, setOptParams] = useState<OptimizationParams>(
@@ -705,7 +705,7 @@ const SimulationDashboard: React.FC = () => {
 					<Tabs value={activeConfigTab} onValueChange={setActiveConfigTab}>
 						<TabsList>
 							<TabsTrigger value="parameters">Parametrit</TabsTrigger>
-							<TabsTrigger value="or-blocks">Salisuunnittelu</TabsTrigger>
+							{/* <TabsTrigger value="or-blocks">Salisuunnittelu</TabsTrigger> */}
 							<TabsTrigger value="surgery-list">Leikkauslista</TabsTrigger>
 						</TabsList>
 

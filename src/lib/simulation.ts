@@ -130,6 +130,12 @@ export interface SimulationParams {
 		turnoverTime?: number; // Time between surgeries in minutes
 		orStartTime?: number; // OR start time in minutes from midnight (default: 465 = 7:45 AM)
 		orEndTime?: number; // OR end time in minutes from midnight (default: 960 = 4:00 PM)
+		overrunRiskPercent?: number; // Percentage risk of surgery going over scheduled time
+		durationDistribution?: {
+			short: number; // Percentage of short surgeries (< 60 min)
+			medium: number; // Percentage of medium surgeries (60-120 min)
+			long: number; // Percentage of long surgeries (> 120 min)
+		};
 	};
 	blockScheduleEnabled: boolean;
 	orBlocks?: ORBlock[];
@@ -488,6 +494,12 @@ export const defaultSimulationParams: SimulationParams = {
 		turnoverTime: 15, // 15 minutes turnover time between surgeries
 		orStartTime: 465, // 7:45 AM (465 minutes from midnight)
 		orEndTime: 960, // 4:00 PM (960 minutes from midnight)
+		overrunRiskPercent: 10, // 10% risk of surgery going over scheduled time
+		durationDistribution: {
+			short: 0.3, // 30% of surgeries are short (< 60 min)
+			medium: 0.5, // 50% of surgeries are medium (60-120 min)
+			long: 0.2, // 20% of surgeries are long (> 120 min)
+		},
 	},
 	blockScheduleEnabled: false,
 	pacuParams: { phase1Beds: 4, phase2Beds: 6 },
@@ -2343,7 +2355,7 @@ export function generateSurgeryListTemplate(
 				if (!patientClass) continue;
 
 				// Generate realistic duration based on patient class
-				const duration = Math.max(
+				let duration = Math.max(
 					30, // Minimum surgery duration 30 minutes
 					Math.round(
 						normalRandom(
@@ -2352,6 +2364,23 @@ export function generateSurgeryListTemplate(
 						)
 					)
 				);
+
+				// Apply overrun risk if configured
+				const overrunRiskPercent =
+					params.surgeryScheduleTemplate.overrunRiskPercent || 0;
+				if (
+					overrunRiskPercent > 0 &&
+					Math.random() * 100 < overrunRiskPercent
+				) {
+					// Surgery goes over scheduled time by 10-50%
+					const overrunFactor = 1 + (0.1 + Math.random() * 0.4); // 1.1 to 1.5
+					duration = Math.round(duration * overrunFactor);
+					console.log(
+						`Surgery overrun: ${duration} minutes (${Math.round(
+							(overrunFactor - 1) * 100
+						)}% over scheduled time)`
+					);
+				}
 
 				// Check if there's enough time for this surgery before OR closing
 				// Include turnover time in the calculation
@@ -2464,6 +2493,22 @@ export function scheduleCasesInBlocks(
 							)
 						)
 					);
+
+					// Apply overrun risk if configured (assuming same params as in generateSurgeryListTemplate)
+					const overrunRiskPercent = 10; // Default to 10% if not specified
+					if (
+						overrunRiskPercent > 0 &&
+						Math.random() * 100 < overrunRiskPercent
+					) {
+						// Surgery goes over scheduled time by 10-50%
+						const overrunFactor = 1 + (0.1 + Math.random() * 0.4); // 1.1 to 1.5
+						duration = Math.round(duration * overrunFactor);
+						console.log(
+							`Block surgery overrun: ${duration} minutes (${Math.round(
+								(overrunFactor - 1) * 100
+							)}% over scheduled time)`
+						);
+					}
 
 					// Apply turnover time (except for first surgery in block)
 					const turnoverTime =
