@@ -214,10 +214,59 @@ const SimulationDashboard: React.FC = () => {
 				const orBlocks: ORBlock[] = validBlocks.map(convertBlockToORBlock);
 
 				console.log("Updated orBlocks in params:", orBlocks);
+
+				// Calculate new patient class distribution based on blocks
+				const newDistribution = { ...prev.patientClassDistribution };
+				const classMinutes: Record<string, number> = {};
+				let totalMinutes = 0;
+
+				// Calculate minutes per patient class from blocks
+				orBlocks.forEach((block) => {
+					const blockDuration = block.end - block.start;
+					const classCount = block.allowedClasses.length;
+
+					if (classCount > 0) {
+						// Distribute block time equally among allowed classes
+						const minutesPerClass = blockDuration / classCount;
+
+						block.allowedClasses.forEach((classId) => {
+							classMinutes[classId] =
+								(classMinutes[classId] || 0) + minutesPerClass;
+							totalMinutes += minutesPerClass;
+						});
+					}
+				});
+
+				// Convert minutes to distribution percentages
+				if (totalMinutes > 0) {
+					Object.keys(classMinutes).forEach((classId) => {
+						newDistribution[classId] = classMinutes[classId] / totalMinutes;
+					});
+
+					// Ensure all patient classes have at least a small percentage
+					prev.patientClasses.forEach((pc) => {
+						if (!newDistribution[pc.id] || newDistribution[pc.id] < 0.01) {
+							newDistribution[pc.id] = 0.01;
+						}
+					});
+
+					// Normalize to ensure sum is 1
+					const sum = Object.values(newDistribution).reduce(
+						(total, val) => total + val,
+						0
+					);
+					if (sum > 0) {
+						Object.keys(newDistribution).forEach((id) => {
+							newDistribution[id] = newDistribution[id] / sum;
+						});
+					}
+				}
+
 				return {
 					...prev,
 					blockScheduleEnabled: true,
 					orBlocks: orBlocks,
+					patientClassDistribution: newDistribution,
 				};
 			});
 

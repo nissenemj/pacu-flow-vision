@@ -140,21 +140,24 @@ const BlockScheduler: React.FC<BlockSchedulerProps> = ({
 		end: number;
 	} | null>(null);
 
-	// Initialize blocks
+	// Initialize blocks only once when component mounts
 	useEffect(() => {
-		let initialBlocks: Block[] = [];
-		orRooms.forEach((or) => {
-			initialBlocks = [
-				...initialBlocks,
-				...createTemplateBlocks(or.id, patientClasses),
-			];
-		});
-		console.log("Initializing blocks:", initialBlocks);
-		setBlocks(initialBlocks);
+		// Only initialize if blocks array is empty
+		if (blocks.length === 0) {
+			let initialBlocks: Block[] = [];
+			orRooms.forEach((or) => {
+				initialBlocks = [
+					...initialBlocks,
+					...createTemplateBlocks(or.id, patientClasses),
+				];
+			});
+			console.log("Initializing blocks:", initialBlocks);
+			setBlocks(initialBlocks);
 
-		// Notify parent component about initial blocks
-		onScheduleChange(initialBlocks);
-	}, [patientClasses]);
+			// Notify parent component about initial blocks
+			onScheduleChange(initialBlocks);
+		}
+	}, []);
 
 	// Update parent component when blocks change
 	useEffect(() => {
