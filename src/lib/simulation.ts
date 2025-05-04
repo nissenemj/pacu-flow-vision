@@ -1001,17 +1001,59 @@ export function runSimulation(params: SimulationParams): SimulationResults {
 
 	// --- Generate Initial Events ---
 	let initialSurgeryList: SurgeryCaseInput[];
-	if (params.surgeryScheduleType === "custom" && params.customSurgeryList) {
+	if (
+		params.surgeryScheduleType === "custom" &&
+		params.customSurgeryList &&
+		params.customSurgeryList.length > 0
+	) {
 		initialSurgeryList = params.customSurgeryList;
-	} else if (params.blockScheduleEnabled && params.orBlocks) {
+		console.log(
+			"Using custom surgery list with",
+			initialSurgeryList.length,
+			"surgeries"
+		);
+	} else if (
+		params.blockScheduleEnabled &&
+		params.orBlocks &&
+		params.orBlocks.length > 0
+	) {
 		initialSurgeryList = scheduleCasesInBlocks(
 			params.orBlocks,
 			params.patientClasses,
 			params.patientClassDistribution,
 			params.simulationDays
 		);
+		console.log(
+			"Generated surgery list from blocks with",
+			initialSurgeryList.length,
+			"surgeries"
+		);
 	} else {
 		initialSurgeryList = generateSurgeryListTemplate(params);
+		console.log(
+			"Generated template surgery list with",
+			initialSurgeryList.length,
+			"surgeries"
+		);
+	}
+
+	// Ensure we have surgeries to simulate
+	if (initialSurgeryList.length === 0) {
+		console.log("No surgeries in list, generating default template");
+		initialSurgeryList = generateSurgeryListTemplate({
+			...params,
+			surgeryScheduleTemplate: {
+				averageDailySurgeries: Math.max(
+					6,
+					params.surgeryScheduleTemplate?.averageDailySurgeries || 6
+				),
+			},
+		});
+		console.log(
+			"Generated default surgery list with",
+			initialSurgeryList.length,
+			"surgeries"
+		);
 	}
 
 	initialSurgeryList.forEach((s) => {
@@ -2262,44 +2304,64 @@ export function generateSurgeryListTemplate(
 	const avgDaily =
 		params.surgeryScheduleTemplate?.averageDailySurgeries ||
 		params.averageDailySurgeries ||
-		6;
+		8; // Increased default from 6 to 8
 	const surgeryList: SurgeryCaseInput[] = [];
 	const surgeriesPerDay = Math.max(1, Math.round(avgDaily));
 
 	for (let day = 0; day < simulationDays; day++) {
 		const surgeriesToday = surgeriesPerDay;
+		// Distribute surgeries across 8 hours (480 minutes) of OR time
+		const operatingMinutesPerDay = 480;
 		const timeBetweenStarts = Math.floor(
-			480 / Math.max(1, Math.ceil(surgeriesToday / numberOfORs))
+			operatingMinutesPerDay /
+				Math.max(1, Math.ceil(surgeriesToday / numberOfORs))
 		);
-		let orIndex = 0;
-		let timeOffset = 0;
-		for (let i = 0; i < surgeriesToday; i++) {
-			const classId = weightedRandomSelection(patientClassDistribution);
-			if (!classId) continue;
-			const patientClass = patientClasses.find((pc) => pc.id === classId);
-			if (!patientClass) continue;
 
-			// Generate duration based on patient class
-			const duration = Math.max(
-				15,
-				Math.round(
-					normalRandom(
-						patientClass.surgeryDurationMean,
-						patientClass.surgeryDurationStd
+		// Start at 8:00 AM (480 minutes from midnight)
+		const dayStartTime = 480;
+
+		// For each OR, schedule surgeries throughout the day
+		for (let orNum = 1; orNum <= numberOfORs; orNum++) {
+			const orRoom = `OR-${orNum}`;
+			let currentTime = dayStartTime;
+
+			// Schedule surgeries until we reach end of day or max surgeries per OR
+			const surgeriesPerOR = Math.ceil(surgeriesToday / numberOfORs);
+			for (let i = 0; i < surgeriesPerOR; i++) {
+				// Don't schedule past 4:00 PM (960 minutes from midnight)
+				if (currentTime >= 960) break;
+
+				const classId = weightedRandomSelection(patientClassDistribution);
+				if (!classId) continue;
+				const patientClass = patientClasses.find((pc) => pc.id === classId);
+				if (!patientClass) continue;
+
+				// Generate duration based on patient class
+				const duration = Math.max(
+					15,
+					Math.round(
+						normalRandom(
+							patientClass.surgeryDurationMean,
+							patientClass.surgeryDurationStd
+						)
 					)
-				)
-			);
+				);
 
-			const orRoom = `OR-${(orIndex % numberOfORs) + 1}`;
-			const scheduledStartTime = day * 1440 + 480 + timeOffset;
-			surgeryList.push({
-				classId,
-				scheduledStartTime,
-				orRoom,
-				duration, // Explicitly set duration
-			});
-			orIndex++;
-			if (orIndex % numberOfORs === 0) timeOffset += timeBetweenStarts;
+				const scheduledStartTime = day * 1440 + currentTime;
+
+				// Add unique ID to make tracking easier
+				surgeryList.push({
+					id: `S-${day}-${orRoom}-${i}`,
+					classId,
+					scheduledStartTime,
+					orRoom,
+					duration,
+					priority: patientClass.priority || 3,
+				});
+
+				// Move to next surgery time, adding turnover time
+				currentTime += duration + 15; // 15 minutes turnover time
+			}
 		}
 	}
 	return surgeryList;

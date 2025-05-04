@@ -343,6 +343,27 @@ const SimulationDashboard: React.FC = () => {
 		// Use setTimeout to allow UI to update before running simulation
 		setTimeout(() => {
 			try {
+				// Generate surgery list if needed
+				let generatedSurgeryList: SurgeryCaseInput[] = [];
+
+				if (scheduleType === "template") {
+					if (blockScheduleEnabled && blocks.length > 0) {
+						console.log("Generating surgery list from blocks for simulation");
+						generatedSurgeryList = scheduleCasesInBlocks(
+							blocks.map(convertBlockToORBlock),
+							params.patientClasses,
+							params.patientClassDistribution,
+							params.simulationDays
+						);
+					} else {
+						console.log("Generating template surgery list for simulation");
+						generatedSurgeryList = generateSurgeryListTemplate(params);
+					}
+
+					// Update surgery list in state
+					setSurgeryList(generatedSurgeryList);
+				}
+
 				// Ensure we're using the right parameters
 				const simulationParams = {
 					...params,
@@ -350,13 +371,17 @@ const SimulationDashboard: React.FC = () => {
 					orBlocks: blocks.map(convertBlockToORBlock),
 					surgeryScheduleType: scheduleType,
 					customSurgeryList:
-						scheduleType === "custom" ? surgeryList : undefined,
+						scheduleType === "custom" ? surgeryList : generatedSurgeryList,
 				};
 
 				console.log("Running simulation with parameters:", simulationParams);
 				console.log("Block schedule enabled:", blockScheduleEnabled);
 				console.log("OR Blocks:", simulationParams.orBlocks);
 				console.log("Surgery list:", simulationParams.customSurgeryList);
+				console.log(
+					"Surgery list length:",
+					simulationParams.customSurgeryList?.length || 0
+				);
 
 				// Run simulation with current parameters
 				const simulationResults = runSimulation(simulationParams);
