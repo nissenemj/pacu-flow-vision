@@ -291,6 +291,26 @@ const SimulationParameters: React.FC<SimulationParametersProps> = ({
 								</div>
 
 								<div>
+									<Label htmlFor="numberOfORs">Leikkaussalien määrä</Label>
+									<div className="flex items-center gap-2">
+										<Slider
+											id="numberOfORs"
+											min={1}
+											max={10}
+											step={1}
+											value={[params.numberOfORs]}
+											onValueChange={(value) =>
+												onParamChange("numberOfORs", value[0])
+											}
+											className="flex-1"
+										/>
+										<span className="w-8 text-center">
+											{params.numberOfORs}
+										</span>
+									</div>
+								</div>
+
+								<div>
 									<Label htmlFor="emergencyRate">
 										Päivystysten määrä päivässä
 									</Label>
