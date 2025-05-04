@@ -1021,6 +1021,9 @@ export function runSimulation(params: SimulationParams): SimulationResults {
 		if (!patientClass) return;
 		const patientId = s.id || `S-${uuidv4()}`;
 		const arrivalTime = s.actualArrivalTime ?? s.scheduledStartTime - 30;
+
+		// Use the provided duration if available, otherwise generate one
+		// This ensures that user-defined durations are respected
 		const duration =
 			s.duration ??
 			Math.max(
@@ -1032,13 +1035,14 @@ export function runSimulation(params: SimulationParams): SimulationResults {
 					)
 				)
 			);
+
 		const priority = s.priority ?? patientClass.priority;
 		patients[patientId] = {
 			...s,
 			id: patientId,
 			caseType: "elective",
 			actualArrivalTime: arrivalTime,
-			duration: duration,
+			duration: duration, // Use the duration we determined above
 			priority: priority,
 			currentState: "scheduled",
 			wardTransferDelay: 0,
@@ -1187,7 +1191,19 @@ export function runSimulation(params: SimulationParams): SimulationResults {
 							);
 							orWaitingTimes.push(nextPatient.orWaitingTime);
 							nextPatient.currentState = "in_or";
-							const surgeryEndTime = currentTime + nextPatient.duration;
+
+							// Apply time-of-day variability to surgery duration if configured
+							const nextPatientClass = getPatientClass(nextPatient);
+							let surgeryDuration = nextPatient.duration;
+							if (nextPatientClass?.timeOfDayVariability) {
+								surgeryDuration = applyTimeOfDayVariability(
+									surgeryDuration,
+									nextPatientClass.timeOfDayVariability,
+									currentTime
+								);
+							}
+
+							const surgeryEndTime = currentTime + surgeryDuration;
 							orResources[orId].busyUntil = surgeryEndTime;
 							addEvent(surgeryEndTime, "SURGERY_END", {
 								patientId: nextPatient.id,
@@ -2260,9 +2276,28 @@ export function generateSurgeryListTemplate(
 		for (let i = 0; i < surgeriesToday; i++) {
 			const classId = weightedRandomSelection(patientClassDistribution);
 			if (!classId) continue;
+			const patientClass = patientClasses.find((pc) => pc.id === classId);
+			if (!patientClass) continue;
+
+			// Generate duration based on patient class
+			const duration = Math.max(
+				15,
+				Math.round(
+					normalRandom(
+						patientClass.surgeryDurationMean,
+						patientClass.surgeryDurationStd
+					)
+				)
+			);
+
 			const orRoom = `OR-${(orIndex % numberOfORs) + 1}`;
 			const scheduledStartTime = day * 1440 + 480 + timeOffset;
-			surgeryList.push({ classId, scheduledStartTime, orRoom });
+			surgeryList.push({
+				classId,
+				scheduledStartTime,
+				orRoom,
+				duration, // Explicitly set duration
+			});
 			orIndex++;
 			if (orIndex % numberOfORs === 0) timeOffset += timeBetweenStarts;
 		}
