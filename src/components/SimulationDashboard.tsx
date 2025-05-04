@@ -633,12 +633,14 @@ const SimulationDashboard: React.FC = () => {
 								patientClasses={params.patientClasses}
 								patientDistribution={params.patientClassDistribution}
 								simulationDays={params.simulationDays}
-								onScheduleGenerated={(newSurgeryList) =>
-									handleSurgeryListChange(newSurgeryList, "custom")
+								onScheduleGenerated={(newSurgeryList, type) =>
+									handleSurgeryListChange(newSurgeryList, type)
 								}
 								onScheduleTypeChange={handleScheduleTypeChange}
 								blocks={blocks}
 								blockScheduleEnabled={blockScheduleEnabled}
+								initialSchedule={surgeryList}
+								initialScheduleType={scheduleType}
 							/>
 
 							<div className="mt-4 flex justify-end">
