@@ -7,6 +7,7 @@ PACU Flow Vision is a simulation tool designed to model and optimize Post-Anesth
 ### Application Overview
 
 The application consists of several main sections:
+
 - **Simulator**: The core simulation environment
 - **Optimizer**: Tools to optimize surgery schedules
 - **Scenarios**: Save and compare different simulation setups
@@ -18,32 +19,28 @@ The application consists of several main sections:
 Before running a simulation, you need to configure the parameters:
 
 1. Navigate to the **Simulator** tab
-2. Select the **Parametrit** (Parameters) sub-tab
+2. Select the **Parameters** sub-tab
 3. Configure the following settings:
 
 ### Resource Settings
-- **Vuodepaikat** (Beds): Set the number of PACU beds (4-20)
-- **Hoitajat/vuoro** (Nurses per shift): Set the number of nurses (2-15)
-- **Hoitaja:potilas-suhde** (Nurse:patient ratio): Set the ratio (1:1 to 1:4)
-- **Simuloitavat päivät** (Simulation days): Set the number of days to simulate (7-90)
+
+- **Beds**: Set the number of PACU beds (4-20)
+- **Nurses per shift**: Set the number of nurses (2-15)
+- **Nurse:patient ratio**: Set the ratio (1:1 to 1:4)
+- **Simulation days**: Set the number of days to simulate (7-90)
 
 ### Patient Distribution
-1. Go to the **Potilasjakauma** (Patient Distribution) tab
+
+1. Go to the **Patient Distribution** tab
 2. Adjust the sliders for each patient class to set their percentage of the total
 3. Ensure the total adds up to 100% (the application will warn you if not)
 
-### Enhanced Nurse Settings
-1. Go to the **Hoitajat** (Nurses) tab
-2. Configure nurse skills:
-   - Enable/disable enhanced nurse model
-   - Add different skill levels
-   - Set which phases each skill level can handle
-   - Configure efficiency multipliers
+### Nurse Settings
 
-3. Configure nurse shifts:
-   - Add different shifts with start times and durations
-   - Set the number of nurses per day of the week
-   - Configure skill distribution within each shift
+In the current version, nurse settings are simplified. The enhanced nurse model is under development and will be available in future versions. Currently, you can set:
+
+1. **Nurses per shift**: The basic number of nurses set in the resource settings
+2. **Nurse:patient ratio**: How many patients one nurse can care for
 
 ## 3. Creating OR Blocks
 
@@ -52,6 +49,7 @@ OR blocks represent scheduled time slots for specific types of surgeries in spec
 1. Go to the **Salisuunnittelu** (OR Block Planning) tab
 2. Click **Lisää blokki** (Add block) to create a new block
 3. Configure each block:
+
    - Select the operating room
    - Choose the day of the week
    - Set start and end times
@@ -68,10 +66,12 @@ After creating OR blocks, you can generate a surgery list:
 1. From the OR blocks view, click **Generoi leikkauslista** (Generate surgery list)
 2. Alternatively, go to the **Leikkauslista** (Surgery List) tab
 3. Choose between:
+
    - **Template**: Automatically generate surgeries based on parameters
    - **Custom**: Manually create or modify the surgery list
 
 4. For custom lists, you can:
+
    - Add individual surgeries
    - Import surgeries from data
    - Modify existing surgeries
@@ -88,6 +88,7 @@ Once your parameters, blocks, and surgery list are configured:
 3. The results will appear in the results section below
 
 ### Important Tips:
+
 - Ensure your patient distribution adds up to 100%
 - If using block scheduling, make sure you've generated a surgery list
 - Longer simulations (more days) provide more statistically reliable results
@@ -98,12 +99,14 @@ Once your parameters, blocks, and surgery list are configured:
 After running a simulation, you can analyze the results:
 
 1. Navigate through the results tabs:
+
    - **Tulokset** (Results): Key metrics and charts
    - **Leikkausaikataulu** (Surgery Schedule): Timeline of surgeries
    - **Saliblokit** (OR Blocks): Block utilization summary
    - **Gantt-kaavio** (Gantt Chart): Detailed timeline visualization
 
 2. Key metrics to analyze:
+
    - **Keskimääräinen OR-odotusaika** (Average OR wait time)
    - **Keskimääräinen PACU-aika** (Average PACU time)
    - **Keskimääräinen osastosiirtoviive** (Average ward transfer delay)
@@ -123,6 +126,7 @@ The optimizer helps find more efficient surgery schedules:
 
 1. Go to the **Optimointi** (Optimization) tab
 2. Configure optimization parameters:
+
    - **Alpha**: Weight for OR utilization
    - **Beta**: Weight for PACU blocking time
    - **Gamma**: Weight for ward transfer delays
@@ -142,11 +146,13 @@ Scenarios allow you to save and compare different simulation setups:
 
 1. Go to the **Skenaariot** (Scenarios) tab
 2. To save the current scenario:
+
    - Enter a name and description
    - Add tags for easier filtering
    - Click **Tallenna skenaario** (Save scenario)
 
 3. To load a saved scenario:
+
    - Browse the list of saved scenarios
    - Click on a scenario to view details
    - Click **Lataa skenaario** (Load scenario) to apply it
@@ -162,6 +168,7 @@ To share or document your simulation results:
 
 1. Go to the **Raportit** (Reports) tab
 2. Configure your report:
+
    - Select which metrics to include
    - Choose which charts to include
    - Add comments or notes
@@ -176,28 +183,36 @@ To share or document your simulation results:
 ### Common Issues and Solutions:
 
 #### Empty Simulation Results
+
 If your simulation shows zeros for all metrics:
+
 - Ensure you've generated a surgery list
 - Check that your OR blocks are properly configured
 - Verify that patient distribution adds up to 100%
 - Increase the number of simulation days
 
 #### Long Simulation Times
+
 If simulations take too long:
+
 - Reduce the number of simulation days
 - Simplify your OR block configuration
 - Reduce the number of patient classes
 - Close other applications to free up resources
 
 #### Unrealistic Results
+
 If results don't match expectations:
+
 - Verify your input parameters against real-world data
 - Check patient class settings (surgery durations, PACU times)
 - Ensure nurse staffing levels are realistic
 - Adjust the nurse-patient ratio to match your facility
 
 #### Optimization Not Improving
+
 If optimization shows minimal improvement:
+
 - Increase the maximum iterations
 - Adjust the weights (alpha, beta, gamma)
 - Increase the initial temperature
