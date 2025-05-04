@@ -337,8 +337,8 @@ export interface SimulationResults {
 
 export const defaultPatientClasses: PatientClass[] = [
 	{
-		id: "A",
-		name: "Luokka A",
+		id: "HERKO",
+		name: "HERKO (Heräämöstä kotiin)",
 		color: "#1f77b4",
 		priority: 1,
 		surgeryDurationMean: 60,
@@ -355,8 +355,8 @@ export const defaultPatientClasses: PatientClass[] = [
 		averagePacuTime: 120,
 	},
 	{
-		id: "B",
-		name: "Luokka B",
+		id: "OSASTO",
+		name: "OSASTO (Heräämöstä osastolle)",
 		color: "#ff7f0e",
 		priority: 2,
 		surgeryDurationMean: 90,
@@ -373,8 +373,8 @@ export const defaultPatientClasses: PatientClass[] = [
 		averagePacuTime: 150,
 	},
 	{
-		id: "C",
-		name: "Luokka C (Päiki)",
+		id: "PAIKI",
+		name: "PÄIKI (Päiväkirurginen)",
 		color: "#2ca02c",
 		priority: 3,
 		surgeryDurationMean: 120,
@@ -391,8 +391,8 @@ export const defaultPatientClasses: PatientClass[] = [
 		averagePacuTime: 30,
 	},
 	{
-		id: "D",
-		name: "Luokka D (Suora)",
+		id: "PKL",
+		name: "PKL (Polikliininen)",
 		color: "#d62728",
 		priority: 4,
 		surgeryDurationMean: 180,
@@ -476,7 +476,7 @@ export const defaultSimulationParams: SimulationParams = {
 	simulationDays: 5,
 	numberOfORs: 3,
 	patientClasses: defaultPatientClasses,
-	patientClassDistribution: { A: 0.25, B: 0.3, C: 0.3, D: 0.15 },
+	patientClassDistribution: { HERKO: 0.25, OSASTO: 0.3, PAIKI: 0.3, PKL: 0.15 },
 	surgeryScheduleType: "template",
 	surgeryScheduleTemplate: { averageDailySurgeries: 6 },
 	blockScheduleEnabled: false,
@@ -494,7 +494,7 @@ export const defaultSimulationParams: SimulationParams = {
 	emergencyParams: {
 		enabled: true,
 		arrivalRateMeanPerDay: 1,
-		patientClassDistribution: { A: 0.4, B: 0.6 },
+		patientClassDistribution: { HERKO: 0.4, OSASTO: 0.6 },
 	},
 	costParams: defaultCostParams,
 	// Legacy properties
