@@ -419,11 +419,14 @@ const SimulationDashboard: React.FC = () => {
 					surgeryScheduleType: "custom" as const, // Always use custom for optimization
 				};
 
-				// Run optimization
+				// Run optimization with progress updates
 				const optResult = optimizeSchedule(
 					initialSchedule,
 					simulationParams,
-					optParams
+					optParams,
+					(progress) => {
+						setOptimizationProgress(progress);
+					}
 				);
 
 				// Update state with results
