@@ -2355,29 +2355,4 @@ export function generateSurgeryList(params: SimulationParams): SurgeryCase[] {
 	return generateSurgeryListTemplate(params) as SurgeryCase[];
 }
 
-// Helper function for weighted random selection
-export function weightedRandomSelection(
-	weights: Record<string, number>
-): string | null {
-	const entries = Object.entries(weights);
-	if (entries.length === 0) return null;
-
-	// Calculate total weight
-	const totalWeight = entries.reduce((sum, [_, weight]) => sum + weight, 0);
-	if (totalWeight <= 0) return entries[0][0]; // Return first key if all weights are zero or negative
-
-	// Generate a random value between 0 and totalWeight
-	const randomValue = Math.random() * totalWeight;
-
-	// Find the selected item
-	let cumulativeWeight = 0;
-	for (const [key, weight] of entries) {
-		cumulativeWeight += weight;
-		if (randomValue < cumulativeWeight) {
-			return key;
-		}
-	}
-
-	// Fallback (should not reach here unless there's a floating-point precision issue)
-	return entries[entries.length - 1][0];
-}
+// This function has been moved to the top of the file to avoid duplication
